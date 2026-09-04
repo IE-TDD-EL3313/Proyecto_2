@@ -206,9 +206,7 @@ A partir de este reloj se generan señales de habilitación de menor frecuencia 
 
 El diagrama de tercer nivel presenta en una **única figura** la descomposición interna de los principales bloques funcionales definidos en el segundo nivel.
 
-<!-- INSERTAR AQUÍ LA ÚNICA IMAGEN DEL DIAGRAMA DE TERCER NIVEL -->
-
-![Diagrama de tercer nivel](imagenes/diagramas/tercer_nivel.png)
+![Diagrama de tercer nivel](figuras/Diagrama_Tercer_Nivel.png)
 
 **Figura 3. Diagrama de tercer nivel del sistema completo.**
 
