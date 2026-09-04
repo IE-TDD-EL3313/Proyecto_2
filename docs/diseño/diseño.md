@@ -40,7 +40,7 @@ Los principales bloques funcionales considerados son:
 
 <!-- INSERTAR AQUÍ LA IMAGEN DEL DIAGRAMA DE PRIMER NIVEL -->
 
-![Diagrama de primer nivel](imagenes/diagramas/primer_nivel.png)
+![Diagrama de primer nivel](https://github.com/IE-TDD-EL3313/Proyecto_2/blob/main/docs/dise%C3%B1o/figuras/Primer%20Nivel.png)
 
 **Figura 1. Diagrama de primer nivel del sistema.**
 
@@ -72,7 +72,7 @@ Este nivel permite definir claramente la frontera del sistema antes de realizar 
 
 <!-- INSERTAR AQUÍ LA IMAGEN DEL DIAGRAMA DE SEGUNDO NIVEL -->
 
-![Diagrama de segundo nivel](imagenes/diagramas/segundo_nivel.png)
+![Diagrama de segundo nivel](https://github.com/IE-TDD-EL3313/Proyecto_2/blob/main/docs/dise%C3%B1o/figuras/Segundo%20Nivel.png)
 
 **Figura 2. Diagrama de segundo nivel del sistema.**
 
