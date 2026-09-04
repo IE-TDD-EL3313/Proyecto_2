@@ -452,8 +452,276 @@ El decodificador de LED recibe información sobre la fase actual del juego y gen
 Los diagramas de cuarto nivel detallan los bloques de la computadora y de la comunicación UART hasta obtener unidades funcionales simples.
 
 ---
+# 6.1 Gestión de entradas locales y reloj
 
-# 6.1 Cuarto nivel – Computadora
+
+
+# 6.2 Cuarto nivel – Gestión de Palabras
+
+La gestión de palabras se detalla en dos sub-bloques: el generador de índice pseudoaleatorio junto con el banco de palabras en ROM, y el registro de la palabra activa junto con el comparador de letras.
+
+## Sub-bloque: LFSR + Ajuste de rango + ROM Banco de Palabras
+
+**a) Nombre del módulo:** Generador de índice y banco de palabras.
+
+**b) Diagrama modular:** *(copiar del diagrama de tercer nivel — sub-bloque "LFSR + Ajuste de rango + ROM Banco de Palabras" dentro de Gestión de Palabras)*
+
+**c) Objetivo:** Generar de forma pseudoaleatoria un índice válido dentro del banco de palabras, respetando el subrango correspondiente al modo de dificultad, y entregar la palabra almacenada en esa dirección.
+
+**d) Entradas:** `clk`, `rst`, `dificultad` (1 bit, desde Control), `pedir_palabra` (pulso, desde Control)
+
+**e) Salidas:** `palabra_rom[63:0]` (interno, hacia el Registro Palabra + Comparador)
+
+**f) Relación con otros módulos:** Recibe `dificultad` del Registro de Modo (dentro de Control) y `pedir_palabra` de la Unidad de Control. Entrega su salida al sub-bloque "Registro Palabra + Comparador" del mismo bloque de Gestión de Palabras.
+
+**g) Explicación de funcionamiento:** El LFSR avanza en cada flanco de reloj (free-running), generando una secuencia pseudoaleatoria de 8 bits de periodo máximo. Cuando llega `pedir_palabra`, el valor actual del LFSR se transforma en una dirección válida de ROM según el ajuste de rango, y esa dirección se usa para leer la palabra correspondiente.
+
+**h) Diseño — justificación y ecuaciones:**
+
+**LFSR de 8 bits (polinomio y ecuación de realimentación):**
+
+```
+Polinomio: x^8 + x^6 + x^5 + x^4 + 1   (LFSR Fibonacci, periodo máximo 255)
+Semilla: cualquier valor != 0x00 (fijada por reset, ej. 8'b10110011)
+
+feedback = lfsr[7] XOR lfsr[5] XOR lfsr[4] XOR lfsr[3]
+lfsr <= {lfsr[6:0], feedback}     (cada ciclo de clk, free-running: en=1 fijo)
+```
+
+*Justificación:* se eligió operación free-running (sin señal de habilitación externa) para que el valor capturado al momento de `pedir_palabra` sea independiente del tiempo que el jugador tardó en presionar `BTN_OK` — esto evita que la secuencia sea predecible por el usuario.
+
+**Ecuación de ajuste de rango (formato ROM y organización de direcciones):**
+
+| Campo | Bits | Descripción |
+|---|---|---|
+| `longitud` | `[63:60]` | Longitud real de la palabra (4–12) |
+| `letra_1` … `letra_12` | `[59:0]`, 5 bits c/u | Código A=`00001` … Z=`11010`; relleno con `00000` si la palabra es más corta que 12 |
+
+| Dificultad | Direcciones ROM | Contenido |
+|---|---|---|
+| Fácil (0) | `0–49` | Las 50 palabras completas del banco |
+| Difícil (1) | subrango superior, ej. `30–49` | Palabras ≥6 letras, ubicadas contiguas al final de la ROM |
+
+```
+indice_valido = dificultad ? (30 + (lfsr[4:0] % 20))   // Difícil: direcciones 30-49
+                            : (lfsr[7:0] % 50)          // Fácil: direcciones 0-49
+```
+
+*Justificación:* ordenar la ROM con las palabras largas en un bloque contiguo permite resolver la selección por dificultad con una sola operación de rango en vez de una tabla de excepciones o un segundo comparador por palabra.
+
+**Latencia de la ROM (detalle de timing):**
+
+```
+Ciclo 1 (pedir_palabra = 1):
+  direccion_rom <= indice_valido
+
+Ciclo 2 (automático, un ciclo después — la ROM sintetiza a Block RAM con salida registrada):
+  palabra_rom disponible en la salida
+```
+
+*Justificación:* una ROM sintetizada como Block RAM en FPGA típicamente registra su salida, por lo que el dato no está disponible en el mismo ciclo en que se presenta la dirección. Esta latencia de 1 ciclo se traslada directamente al sub-bloque "Registro Palabra + Comparador" y es compatible con el diseño de la FSM de Control, que ya espera `palabra_lista` como un pulso, sin asumir que llega instantáneamente.
+
+## Sub-bloque: Registro Palabra + Comparador
+
+**a) Nombre del módulo:** Registro de palabra actual y comparador de letra.
+
+**b) Diagrama modular:** *(copiar del diagrama de tercer nivel — sub-bloque "Registro Palabra + Comparador")*
+
+**c) Objetivo:** Almacenar la palabra secreta seleccionada y comparar cada letra recibida contra sus 12 posiciones, generando la máscara de coincidencia.
+
+**d) Entradas:** `clk`, `rst`, `palabra_rom[63:0]` (desde ROM, disponible 1 ciclo después de `pedir_palabra`), `letra_in[4:0]`, `validar` (pulso, desde Control)
+
+**e) Salidas:** `longitud_palabra[3:0]`, `palabra_lista` (pulso), `mask_coincidencia[11:0]`
+
+**f) Relación con otros módulos:** Recibe la palabra del sub-bloque ROM. Entrega `longitud_palabra` y `palabra_lista` a la Unidad de Control, y `mask_coincidencia` al Datapath de Control (que la reduce a `flags.hay_acierto`).
+
+**g) Explicación de funcionamiento:** Al recibir la palabra de la ROM (un ciclo después de `pedir_palabra`), la deserializa en 12 grupos de 5 bits y guarda la longitud. Al recibir `validar`, compara `letra_in` contra cada una de las 12 posiciones válidas (según `longitud_palabra`) y activa el bit correspondiente de `mask_coincidencia` donde haya coincidencia.
+
+**h) Diseño — ecuaciones de carga:**
+
+```
+Evento: 1 ciclo después de pedir_palabra (palabra_rom disponible)
+  para i en 0..11:
+    letras_palabra[i][4:0] <= palabra_rom[(i*5)+4 : i*5]
+  longitud_palabra[3:0]    <= palabra_rom[63:60]
+  palabra_lista            <= 1                        (pulso de 1 ciclo)
+
+Evento: validar = 1
+  para i en 0..11:
+    mask_coincidencia[i] <= (letras_palabra[i] == letra_in) AND (i < longitud_palabra)
+```
+
+---
+
+# 6.3 Cuarto nivel – Gestión del Tiempo
+
+## Sub-bloque: Temporizador de Partida
+
+**a) Nombre del módulo:** Temporizador de partida.
+
+**b) Diagrama modular:** *(copiar del diagrama de tercer nivel — bloque completo "Gestión del Tiempo")*
+
+**c) Objetivo:** Contar de forma regresiva el tiempo disponible de la partida según el modo de dificultad, y notificar a Control cuando el tiempo se agota.
+
+**d) Entradas:** `clk`, `rst`, `tick_1s` (desde Reloj Integrado), `dificultad`, `tiempo_activo` (desde Control)
+
+**e) Salidas:** `tiempo_restante_bcd[7:0]` (hacia Visualización, directo), `tiempo_agotado` (hacia Control)
+
+**f) Relación con otros módulos:** Recibe `tick_1s` del Reloj Integrado y `dificultad`/`tiempo_activo` de Control. Su salida `tiempo_restante_bcd` va directo a Gestión de Visualización (no pasa por Control); `tiempo_agotado` sí va a la Unidad de Control.
+
+**g) Explicación de funcionamiento:** Mientras `tiempo_activo=0`, el temporizador permanece en reposo (`IDLE`). Al activarse `tiempo_activo`, carga el límite correspondiente al modo (60 s Fácil / 45 s Difícil) y decrementa 1 unidad por cada `tick_1s` recibido, hasta llegar a 0, momento en el cual activa `tiempo_agotado` mientras permanece en el mismo estado hasta que Control decida desactivar `tiempo_activo`.
+
+**h) Diseño — diagrama de estados y ecuaciones:**
+
+<!-- INSERTAR AQUÍ LA IMAGEN DEL DIAGRAMA DE ESTADOS DEL TEMPORIZADOR -->
+
+![Diagrama de estados del Temporizador de Partida](figuras/dg1.jpg)
+
+**Figura 4. Diagrama de estados del Temporizador de Partida (dibujado a mano por el equipo).**
+
+El diagrama contempla dos estados, `IDLE` y `CONTANDO`. La transición `IDLE → CONTANDO` ocurre con `tiempo_activo=1`, momento en el cual se carga el límite según la dificultad. La transición de regreso `CONTANDO → IDLE` ocurre con la única condición `tiempo_activo=0`.
+
+**Nota de diseño:** `tiempo_restante == 0` **no** regresa el temporizador a `IDLE` por sí solo — solo activa la bandera `tiempo_agotado=1`, permaneciendo en `CONTANDO` hasta que Control decida bajar `tiempo_activo` (por ejemplo, al pasar a `FIN_PARTIDA`). El Temporizador solo cuenta y reporta; la decisión de terminar la partida le corresponde a la Unidad de Control.
+
+| Registro | Ancho | Carga | Actualización |
+|---|---|---|---|
+| `tiempo_restante` | 7 bits (0–99) | Al entrar a `CONTANDO`: `60` si `dificultad=0`, `45` si `dificultad=1` | `tiempo_restante <= tiempo_restante - 1` cada `tick_1s`, solo en estado `CONTANDO` |
+| `tiempo_restante_bcd[7:0]` | combinacional | — | Conversión binario→BCD (decenas en `[7:4]`, unidades en `[3:0]`) |
+| `tiempo_agotado` | 1 bit | — | `= (tiempo_restante == 0)` en estado `CONTANDO` |
+
+---
+
+# 6.4 Cuarto nivel – Control y Coordinación del Juego
+
+## Sub-bloque: Registro de Modo
+
+**a) Nombre del módulo:** Registro de modo de dificultad.
+
+**b) Diagrama modular:** *(copiar del diagrama de tercer nivel — sub-bloque "Registro de Modo")*
+
+**c) Objetivo:** Mantener el valor de dificultad seleccionado, alternando entre Fácil y Difícil mientras el sistema está en `SEL_MODO`.
+
+**d) Entradas:** `clk`, `rst`, `sel_pulse`, `rst_pulse`
+
+**e) Salidas:** `dificultad` (1 bit)
+
+**f) Relación con otros módulos:** Su salida alimenta a Gestión de Palabras (ajuste de rango) y Gestión del Tiempo (límite de tiempo). Recibe `sel_pulse` directo desde Gestión de entradas locales, sin pasar por la Unidad de Control.
+
+**g) Explicación de funcionamiento:** Cada `sel_pulse` invierte el valor de `dificultad`. `rst_pulse` lo regresa a 0 (Fácil) como valor por defecto.
+
+**h) Diseño:**
+
+```
+Evento: sel_pulse = 1
+  dificultad <= ~dificultad
+Evento: rst_pulse = 1 (o rst)
+  dificultad <= 0   (Fácil, por defecto)
+```
+
+## Sub-bloque: Unidad de Control (FSM) + Datapath
+
+**a) Nombre del módulo:** Unidad de Control y Datapath del juego.
+
+**b) Diagrama modular:** *(copiar del diagrama de tercer nivel — sub-bloques "Unidad de Control" y "Datapath")*
+
+**c) Objetivo:** Coordinar el flujo completo de una partida (selección de modo, carga de palabra, juego, validación de letras, resultado final), decidiendo en cada estado qué acción ordenar al Datapath y qué señales enviar al resto de bloques del sistema.
+
+**d) Entradas:**
+
+*Unidad de Control (solo bits de condición):* `clk`, `rst`, `sel_pulse`, `ok_pulse`, `rst_pulse`, `nueva_letra`, `palabra_lista`, `tiempo_agotado`, `flags[3:0]`
+
+*Datapath (buses de datos + comando):* `letra_ascii[7:0]`, `mask_coincidencia[11:0]`, `longitud_palabra[3:0]`, `palabra_lista`, `cmd[2:0]`
+
+**e) Salidas:**
+
+*Unidad de Control:* `pedir_palabra`, `validar`, `tiempo_activo`, `estado_juego[1:0]`, `evento_sonido[1:0]`, `cmd[2:0]`
+
+*Datapath:* `flags[3:0]`, `letra_in[4:0]`, `palabra_revelada[11:0]`, `intentos_restantes[2:0]`, `partidas_ganadas_bcd[7:0]`, `trama_estado`
+
+**f) Relación con otros módulos:** Es el nodo central del sistema — se conecta con Gestión de entradas locales, Comunicación con la PC, Gestión de Palabras, Gestión del Tiempo, Gestión de Visualización y Alertas, y Buzzer Externo. La Unidad de Control y el Datapath se retroalimentan entre sí mediante `cmd[2:0]` (control→datos) y `flags[3:0]` (datos→control).
+
+**g) Explicación de funcionamiento:** La Unidad de Control es una FSM de 5 estados (`SEL_MODO`, `CARGANDO`, `JUGANDO`, `VALIDANDO`, `FIN_PARTIDA`) que decide únicamente con base en condiciones booleanas de 1 bit. Nunca examina directamente un bus de datos: toda comparación de magnitudes (longitud de palabra, máscara de coincidencia, conteo de intentos) ocurre en el Datapath, que reduce esos buses a las 4 banderas de `flags[3:0]`. La FSM ordena acciones al Datapath mediante `cmd[2:0]`, y este ejecuta la actualización de registros correspondiente.
+
+**h) Diseño — codificación de señales y diagrama de estados:**
+
+**Codificación `cmd[2:0]` (Unidad de Control → Datapath):**
+
+| cmd | Acción |
+|---|---|
+| `000` | Ninguna (reposo) |
+| `001` | `carga_letra` |
+| `010` | `incrementa_intento` |
+| `011` | `incrementa_ganadas` |
+| `100` | `limpia_todo` |
+| `101` | `enviar_trama` |
+
+**Codificación `flags[3:0]` (Datapath → Unidad de Control):**
+
+| bit | Nombre | Se activa cuando |
+|---|---|---|
+| `flags[0]` | `hay_acierto` | `mask_coincidencia != 0` |
+| `flags[1]` | `letra_repetida` | la letra ya estaba marcada en `letras_usadas` |
+| `flags[2]` | `palabra_completa` | todas las posiciones de `palabra_revelada` están reveladas |
+| `flags[3]` | `intentos_agotados` | `intentos_fallidos == 6` |
+
+**Codificación `estado_juego[1:0]`:**
+
+| Código | Estado |
+|---|---|
+| `00` | SEL_MODO |
+| `01` | CARGANDO |
+| `10` | JUGANDO |
+| `11` | FIN_PARTIDA |
+
+**Diagrama de estados:**
+
+<!-- INSERTAR AQUÍ LA IMAGEN DEL DIAGRAMA DE ESTADOS DE LA UNIDAD DE CONTROL -->
+
+![Diagrama de estados de la Unidad de Control](figuras/dg2.jpg)
+
+**Figura 5. Diagrama de estados de la Unidad de Control (dibujado a mano por el equipo).**
+
+El diagrama contempla cinco estados — `SEL_MODO`, `CARGANDO`, `JUGANDO`, `VALIDANDO`, `FIN_PARTIDA` — con las transiciones principales `ok_pulse`, `palabra_lista`, `nueva_letra=1`, `continúa`, `fin_partida`, `contador_despliegue==3`. El detalle de cada transición agrupada se documenta en las tablas siguientes.
+
+**Nota de diseño — `rst_pulse`:** no se dibuja en el diagrama para no saturarlo, pero `rst_pulse` regresa la FSM a `SEL_MODO` desde **cualquier estado**, con prioridad máxima sobre cualquier otra transición.
+
+**Tabla de transición — desde `VALIDANDO`:**
+
+| Condición | Acción (`cmd`) | `evento_sonido` | Hacia |
+|---|---|---|---|
+| `flags.palabra_completa` | `enviar_trama` | victoria | FIN_PARTIDA |
+| `flags.intentos_agotados` OR `tiempo_agotado` | `enviar_trama` | derrota | FIN_PARTIDA |
+| `flags.letra_repetida` | ninguno | nada | JUGANDO *(se ignora, no consume intento ni resetea tiempo)* |
+| letra válida no repetida, `flags.hay_acierto=1` | `carga_letra` | acierto | JUGANDO |
+| letra válida no repetida, `flags.hay_acierto=0` | `incrementa_intento` | error | JUGANDO *(o FIN_PARTIDA si con este error se activa `flags.intentos_agotados`)* |
+
+**Tabla de transición — desde `FIN_PARTIDA`:**
+
+| Evento | Efecto |
+|---|---|
+| Al entrar al estado | Muestra `GANÓ`/`PERDIÓ` en LCD; `cmd=incrementa_ganadas` solo si el resultado fue victoria; `tiempo_activo=0` |
+| `contador_despliegue == 3` | Regresa a `SEL_MODO` |
+
+**Notas de diseño (casos de borde):**
+
+> **`nueva_letra` fuera de `JUGANDO`:** la señal `nueva_letra` solo produce una transición de estado cuando el sistema está en `JUGANDO` (transición hacia `VALIDANDO`). Si `nueva_letra` llega estando en `SEL_MODO`, `CARGANDO` o `FIN_PARTIDA`, la FSM permanece en su estado actual y la letra se descarta sin efecto sobre la partida — no se requiere lógica adicional, es consecuencia directa de que solo existe una transición que consume `nueva_letra`.
+
+> **Prioridad `ok_pulse` vs `sel_pulse`:** si ambos pulsos llegan activos en el mismo ciclo de reloj (poco probable pero posible), `ok_pulse` tiene prioridad: la FSM confirma el modo actualmente mostrado e inicia la partida, ignorando el cambio de modo solicitado por `sel_pulse` en ese ciclo.
+
+> **Despliegue de resultado (3 s):** el estado `FIN_PARTIDA` permanece activo mientras `contador_despliegue < 3`. Este contador se incrementa con cada `tick_1s` y se reinicia a 0 al entrar al estado. Al alcanzar 3, la FSM regresa a `SEL_MODO`.
+
+**Tabla de registros del Datapath:**
+
+| Registro | Ancho | Se actualiza con | Detalle |
+|---|---|---|---|
+| `letras_usadas` | 26 bits | `cmd=carga_letra` | `letras_usadas[letra_ascii-'A'] <= 1` |
+| `palabra_revelada` | 12 bits | `cmd=carga_letra` (si `hay_acierto`) | `palabra_revelada <= palabra_revelada OR mask_coincidencia` |
+| `intentos_fallidos` | 3 bits | `cmd=incrementa_intento` | `intentos_fallidos <= intentos_fallidos + 1` |
+| `partidas_ganadas_bcd` | 8 bits | `cmd=incrementa_ganadas` | Incrementa en BCD, satura en 99 |
+| `intentos_restantes` | 3 bits (salida) | combinacional | `= 6 - intentos_fallidos` |
+| `contador_despliegue` | 2 bits | `tick_1s`, mientras `estado_juego==FIN_PARTIDA` | Se reinicia a 0 al entrar al estado; cuenta hasta 3, dispara el regreso a `SEL_MODO` |
+
+# 6.5 Cuarto nivel – Computadora
 
 <!-- INSERTAR AQUÍ LA IMAGEN DEL CUARTO NIVEL DE COMPUTADORA -->
 
@@ -512,7 +780,7 @@ Su función es convertir los mensajes recibidos en información comprensible par
 
 ---
 
-# 6.2 Cuarto nivel – Comunicación con la PC
+# 6.6 Cuarto nivel – Comunicación con la PC
 
 <!-- INSERTAR AQUÍ LA IMAGEN DEL CUARTO NIVEL DE UART -->
 
