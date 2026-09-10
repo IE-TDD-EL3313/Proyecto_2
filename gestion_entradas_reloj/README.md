@@ -14,12 +14,16 @@ Este bloque reemplaza los módulos provisionales `boton_pulso.sv` y
 - `rtl/detector_flanco_subida.sv`: genera un pulso al detectar una transición
   estable de 0 a 1.
 - `rtl/banco_detectores_flanco.sv`: genera los pulsos de los tres botones.
+- `rtl/gestion_entradas_locales.sv`: integra la cadena completa y entrega
+  `sel_pulse`, `ok_pulse` y `rst_pulse`.
 - `tb/tb_reloj_integrado.sv`: prueba autoverificable del bloque de reloj.
 - `tb/tb_banco_sincronizadores.sv`: prueba del banco de sincronizadores.
 - `tb/tb_banco_filtros_antirrebote.sv`: prueba rebotes, pulsación, liberación
   e independencia entre canales.
 - `tb/tb_banco_detectores_flanco.sv`: comprueba pulsos individuales,
   simultáneos y botones mantenidos.
+- `tb/tb_gestion_entradas_locales.sv`: inyecta rebotes en los botones físicos
+  y verifica la cadena completa.
 
 El diseño utiliza exclusivamente el reloj principal `clk`; las salidas `ce_*`
 son habilitaciones y no deben conectarse como relojes derivados.
