@@ -16,6 +16,8 @@ Este bloque reemplaza los módulos provisionales `boton_pulso.sv` y
 - `rtl/banco_detectores_flanco.sv`: genera los pulsos de los tres botones.
 - `rtl/gestion_entradas_locales.sv`: integra la cadena completa y entrega
   `sel_pulse`, `ok_pulse` y `rst_pulse`.
+- `rtl/entradas_reloj.sv`: bloque superior que integra las entradas locales
+  con las tres habilitaciones temporales.
 - `tb/tb_reloj_integrado.sv`: prueba autoverificable del bloque de reloj.
 - `tb/tb_banco_sincronizadores.sv`: prueba del banco de sincronizadores.
 - `tb/tb_banco_filtros_antirrebote.sv`: prueba rebotes, pulsación, liberación
@@ -24,6 +26,7 @@ Este bloque reemplaza los módulos provisionales `boton_pulso.sv` y
   simultáneos y botones mantenidos.
 - `tb/tb_gestion_entradas_locales.sv`: inyecta rebotes en los botones físicos
   y verifica la cadena completa.
+- `tb/tb_entradas_reloj.sv`: verifica conjuntamente botones y reloj integrado.
 
 El diseño utiliza exclusivamente el reloj principal `clk`; las salidas `ce_*`
 son habilitaciones y no deben conectarse como relojes derivados.
@@ -36,3 +39,11 @@ La convención utilizada para los buses de botones es:
 
 Con la configuración definitiva, el antirrebote toma 20 muestras a 1 kHz, por
 lo que una transición debe permanecer estable durante 20 ms para ser aceptada.
+
+## Señales de reinicio
+
+`rst_n` es el reinicio activo en bajo de la electrónica del bloque.
+`btn_rst_i` se procesa igual que los otros botones y produce `rst_pulse`, que
+solicita a la lógica principal reiniciar el juego. No se debe obtener `rst_n`
+directamente de `btn_rst_i`, porque eso impediría generar correctamente el
+pulso filtrado de reinicio del juego.
