@@ -47,3 +47,25 @@ lo que una transición debe permanecer estable durante 20 ms para ser aceptada.
 solicita a la lógica principal reiniciar el juego. No se debe obtener `rst_n`
 directamente de `btn_rst_i`, porque eso impediría generar correctamente el
 pulso filtrado de reinicio del juego.
+
+## Prueba en Nexys 4
+
+`pruebas_fpga/top/top_prueba_entradas_reloj.sv` y
+`pruebas_fpga/constraints/entradas_reloj_nexys4.xdc` forman un arnés exclusivo
+para la Nexys 4 Rev. B (`xc7a100ticsg324-1L`).
+
+- BTNU cambia LED0 una vez por pulsación.
+- BTNC cambia LED1 una vez por pulsación.
+- BTND cambia LED2 una vez por pulsación.
+- LED3 cambia automáticamente una vez por segundo.
+- CPU_RESETN apaga los cuatro LED y reinicia la electrónica.
+
+Para generar el bitstream desde una terminal:
+
+```bash
+vivado -mode batch -source gestion_entradas_reloj/pruebas_fpga/generar_bitstream.tcl
+```
+
+El resultado queda en
+`gestion_entradas_reloj/pruebas_fpga/build/top_prueba_entradas_reloj.bit`.
+La carpeta `build` se ignora en Git porque contiene archivos generados.
