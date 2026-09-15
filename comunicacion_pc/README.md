@@ -32,3 +32,11 @@ La prueba `top_prueba_uart_tx.vhd` envía una `A` cada vez que se presiona BTNC.
 `LED0` cambia de estado al terminar cada transmisión. La terminal de la PC debe
 usar 115200 baudios, 8N1 y ningún control de flujo. La salida utiliza `RsTx` en
 el pin `D4` de la Nexys 4.
+
+## UART completo y prueba de eco
+
+`rtl/UART.vhd` integra RX y TX con la interfaz entregada por el profesor. La
+prueba `top_prueba_uart_eco.vhd` devuelve inmediatamente cada byte recibido.
+Así, al escribir `A` en la terminal deben aparecer dos `A`: una corresponde al
+eco local de la terminal y otra es la respuesta enviada por la FPGA. Si el eco
+local está desactivado, aparece solamente la respuesta de la FPGA.
