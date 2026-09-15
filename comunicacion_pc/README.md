@@ -27,3 +27,8 @@ La terminal se configura a 115200 baudios, 8N1 y sin control de flujo. El pin
 en `tx_start` guarda el byte e inicia la transmisión. Al finalizar el bit de
 parada, `tx_rdy` produce un pulso de un ciclo. El divisor predeterminado es 868
 para trabajar a 115200 baudios con el reloj de 100 MHz de la Nexys 4.
+
+La prueba `top_prueba_uart_tx.vhd` envía una `A` cada vez que se presiona BTNC.
+`LED0` cambia de estado al terminar cada transmisión. La terminal de la PC debe
+usar 115200 baudios, 8N1 y ningún control de flujo. La salida utiliza `RsTx` en
+el pin `D4` de la Nexys 4.
