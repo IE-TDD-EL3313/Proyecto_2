@@ -71,3 +71,9 @@ registros. Hacia el sistema presenta `clk_i`, `rst_i`, `write_enable_i`,
 las líneas seriales `rx_i` y `tx_o`. También expone `new_rx_o` y `busy_o` para
 que el controlador principal conozca el estado sin consultar continuamente el
 registro CONTROL.
+
+## Protocolo de aplicación
+
+`rtl/generador_tramas_uart.sv` convierte cada evento del juego en un mensaje
+de 19 bytes y lo envía escribiendo en `DATA_TX` y `CONTROL`. El formato completo
+está documentado en `docs/protocolo_uart.md`.
