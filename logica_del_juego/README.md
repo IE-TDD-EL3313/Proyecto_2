@@ -36,15 +36,14 @@ Nexys4 antes de la integración final con el resto del equipo. Ninguno de
 estos archivos pertenece a los bloques anteriores — son sustitutos mínimos
 de bloques que le corresponden a otro sub-equipo:
 
-  - `boton_pulso.sv` — se conserva solo para simular `nueva_letra` con BTNR
-    hasta integrar UART
+  - la entrada de letras ya utiliza `comunicacion_pc/rtl/` mediante USB-UART
 - `top/seg7_mux_driver.sv` — sustituto provisional de "Gestión de Visualización"
 - `top/top_test_ahorcado.sv` — top-level del harness de prueba (NO es el top final del proyecto)
 - `constraints/ahorcado_test.xdc` — constraints del harness
 
 El arnés ya utiliza `gestion_entradas_reloj/rtl/entradas_reloj.sv` para BTNU,
-BTNC, BTND y la habilitación de un segundo. La visualización y la entrada de
-letras siguen siendo sustitutos temporales hasta integrar sus bloques finales.
+BTNC, BTND y la habilitación de un segundo. Las letras se reciben desde la PC
+por UART; la visualización sigue siendo provisional hasta integrar su bloque.
 
 ## Cómo simular cada bloque en Vivado
 Agregar SOLO los archivos de `rtl/` de un bloque como Design Sources, y su

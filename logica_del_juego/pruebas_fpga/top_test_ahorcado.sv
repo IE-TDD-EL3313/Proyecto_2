@@ -5,12 +5,12 @@
 // ya validados por simulacion: Gestion de Palabras, Gestion del Tiempo, y
 // Control y Coordinacion del Juego.
 //
-// No incluye UART ni LCD. Para las entradas y el reloj utiliza el bloque
-// definitivo gestion_entradas_reloj. En este arnes:
-//   - "letra" a adivinar: se ingresa con sw[4:0] (codigo 1-26, A=00001) y
-//     se envia con BTNR (pulso "nueva_letra").
+// No incluye LCD. Para las entradas y el reloj utiliza el bloque definitivo
+// gestion_entradas_reloj. Las letras se reciben por USB-UART desde la PC.
+// En este arnes:
 //   - BTNU = sel_pulse (cambia dificultad), BTNC = ok_pulse (confirma/inicia)
 //   - BTND = rst_pulse (reinicia el juego)
+//   - RsRx/RsTx = comunicacion USB-UART a 115200 baudios
 //   - CPU_RESETN = reset electronico activo en bajo
 //   - LEDs: ver mapeo abajo.
 //   - 7 segmentos: 2 digitos de tiempo restante + 2 digitos de partidas
@@ -22,8 +22,8 @@ module top_test_ahorcado (
     input  logic        btnC,
     input  logic        btnU,
     input  logic        btnD,
-    input  logic        btnR,
-    input  logic [4:0]  sw,           // sw[4:0]: codigo de letra 1-26
+    input  logic        RsRx,
+    output logic        RsTx,
     output logic [9:0]  led,
     output logic [6:0]  seg,
     output logic [7:0]  an,
@@ -51,12 +51,21 @@ module top_test_ahorcado (
         .ce_display  (ce_display)
     );
 
-    // BTNR solo sustituye la futura recepcion UART durante esta prueba.
-    boton_pulso u_btn_let (.clk(clk), .rst_n(rst_n), .boton_raw(btnR), .pulso(nueva_letra));
-
-    // codigo de switch (1-26) -> ASCII, para alimentar letra_ascii
+    // ---------------- Comunicacion UART con la computadora ----------------
     logic [7:0] letra_ascii;
-    assign letra_ascii = (sw != 5'd0 && sw <= 5'd26) ? (8'd64 + {3'b000, sw}) : 8'd0;
+    logic       uart_tx_done;
+
+    UART u_uart (
+        .clk         (clk),
+        .reset       (~rst_n),
+        .tx_start    (1'b0),
+        .tx_rdy      (uart_tx_done),
+        .rx_data_rdy (nueva_letra),
+        .data_in     (8'h00),
+        .data_out    (letra_ascii),
+        .rx          (RsRx),
+        .tx          (RsTx)
+    );
 
     // ---------------- Gestion de Palabras ----------------
     logic        dificultad;
