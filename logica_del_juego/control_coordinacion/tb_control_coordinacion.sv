@@ -29,6 +29,9 @@ module tb_control_coordinacion;
     logic        resultado_final;
     logic [7:0]  partidas_ganadas_bcd;
     logic        enviar_trama;
+    logic        evento_letra;
+    logic [1:0]  resultado_letra;
+    logic [1:0]  causa_final;
     logic [1:0]  evento_sonido;
 
     int errores = 0, pruebas = 0;
@@ -88,6 +91,9 @@ module tb_control_coordinacion;
     // durante el UNICO ciclo en que estado==VALIDANDO. Se capturan aqui,
     // antes de que la FSM avance a JUGANDO/FIN_PARTIDA en el siguiente flanco.
     logic [1:0] evento_capturado;
+    logic [1:0] resultado_letra_capturado;
+    logic [1:0] causa_final_capturada;
+    logic       evento_letra_capturado;
     logic       trama_capturada;
 
     task automatic simular_letra(input [7:0] letra);
@@ -97,6 +103,9 @@ module tb_control_coordinacion;
         @(posedge clk); #1;              // estado entra a VALIDANDO en este flanco
         nueva_letra       = 1'b0;
         evento_capturado  = evento_sonido; // capturado MIENTRAS estado==VALIDANDO
+        evento_letra_capturado = evento_letra;
+        resultado_letra_capturado = resultado_letra;
+        causa_final_capturada = causa_final;
         trama_capturada   = enviar_trama;
         @(posedge clk); #1;              // VALIDANDO -> JUGANDO/FIN_PARTIDA
     endtask
@@ -126,16 +135,20 @@ module tb_control_coordinacion;
         // --- Letra correcta: G ---
         simular_letra("G");
         check(evento_capturado == 2'b01, "No sono acierto tras letra G correcta");
+        check(evento_letra_capturado && resultado_letra_capturado == 2'b01,
+              "UART no reporto el acierto");
         check(intentos_restantes == 3'd6, "Intentos no deberian bajar con acierto");
 
         // --- Letra incorrecta: X ---
         simular_letra("X");
         check(evento_capturado == 2'b10, "No sono error tras letra X incorrecta");
+        check(resultado_letra_capturado == 2'b10, "UART no reporto el error");
         check(intentos_restantes == 3'd5, "Intentos no bajaron tras letra incorrecta");
 
         // --- Letra repetida: G otra vez ---
         simular_letra("G");
         check(evento_capturado == 2'b00, "Letra repetida no deberia sonar nada");
+        check(resultado_letra_capturado == 2'b11, "UART no reporto letra repetida");
         check(intentos_restantes == 3'd5, "Letra repetida no deberia consumir intento");
 
         // --- Completar la palabra: A, T, O ---
@@ -145,6 +158,7 @@ module tb_control_coordinacion;
         check(estado_juego == FIN_PARTIDA, "No paso a FIN_PARTIDA al completar palabra");
         check(resultado_final == 1'b1, "resultado_final deberia ser victoria (1)");
         check(trama_capturada == 1'b1, "enviar_trama no se activo al ganar");
+        check(causa_final_capturada == 2'b01, "UART no reporto victoria");
 
         // --- Verificar que se incrementa partidas_ganadas_bcd exactamente 1 vez ---
         @(posedge clk); #1;

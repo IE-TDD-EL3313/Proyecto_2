@@ -42,6 +42,9 @@ module unidad_control (
     output logic [1:0] estado_juego,
     output logic       resultado_final,   // 1=victoria, 0=derrota (valido en FIN_PARTIDA)
     output logic       enviar_trama,
+    output logic       evento_letra,
+    output logic [1:0] resultado_letra,   // 01 acierto, 10 error, 11 repetida
+    output logic [1:0] causa_final,       // 01 victoria, 10 intentos, 11 tiempo
     output logic [1:0] evento_sonido,     // 00 nada, 01 acierto, 10 error, 11 fin
     output logic [2:0] cmd
 );
@@ -108,6 +111,9 @@ module unidad_control (
         evento_sonido   = 2'b00;
         cmd             = CMD_NADA;
         enviar_trama    = 1'b0;
+        evento_letra    = 1'b0;
+        resultado_letra = 2'b00;
+        causa_final     = 2'b00;
 
         case (estado)
             SEL_MODO: begin
@@ -129,6 +135,7 @@ module unidad_control (
                     estado_next   = FIN_PARTIDA;
                     evento_sonido = 2'b11;
                     enviar_trama  = 1'b1;
+                    causa_final   = 2'b11;
                 end else if (nueva_letra) begin
                     validar     = 1'b1;
                     estado_next = VALIDANDO;
@@ -136,26 +143,33 @@ module unidad_control (
             end
 
             VALIDANDO: begin
+                evento_letra = 1'b1;
                 if (palabra_completa) begin
                     cmd           = CMD_CARGA;    // revela la ultima letra
                     evento_sonido = 2'b11;
                     enviar_trama  = 1'b1;
+                    resultado_letra = 2'b01;
+                    causa_final     = 2'b01;
                     estado_next   = FIN_PARTIDA;
                 end else if (letra_repetida) begin
                     cmd           = CMD_NADA;      // se ignora, sin penalizar
                     evento_sonido = 2'b00;
+                    resultado_letra = 2'b11;
                     estado_next   = JUGANDO;
                 end else if (hay_acierto) begin
                     cmd           = CMD_CARGA;
                     evento_sonido = 2'b01;
+                    resultado_letra = 2'b01;
                     estado_next   = JUGANDO;
                 end else begin
                     // error: se comete siempre (cmd=CMD_INTENTO), y ademas
                     // termina la partida si intentos_agotados o tiempo_agotado
                     cmd = CMD_INTENTO;
+                    resultado_letra = 2'b10;
                     if (intentos_agotados || tiempo_agotado) begin
                         evento_sonido = 2'b11;
                         enviar_trama  = 1'b1;
+                        causa_final   = tiempo_agotado ? 2'b11 : 2'b10;
                         estado_next   = FIN_PARTIDA;
                     end else begin
                         evento_sonido = 2'b10;
