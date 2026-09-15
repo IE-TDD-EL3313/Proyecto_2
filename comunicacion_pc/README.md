@@ -62,3 +62,12 @@ llega un byte y se limpia escribiendo cero en el bit 1 de `CONTROL`.
 `send` solicita una transmisión. Mientras TX trabaja mantiene `busy` activo y
 no acepta otra solicitud. Al recibir `tx_done`, genera `tx_complete` para que
 el banco limpie `send`. También entrega el pulso de recepción como `rx_event`.
+
+## Periférico UART completo
+
+`rtl/periferico_uart.sv` integra el núcleo VHDL RX/TX, el control y el banco de
+registros. Hacia el sistema presenta `clk_i`, `rst_i`, `write_enable_i`,
+`addr_i[1:0]`, `wdata_i[31:0]` y `rdata_o[31:0]`; hacia el exterior presenta
+las líneas seriales `rx_i` y `tx_o`. También expone `new_rx_o` y `busy_o` para
+que el controlador principal conozca el estado sin consultar continuamente el
+registro CONTROL.
