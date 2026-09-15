@@ -43,7 +43,9 @@ de bloques que le corresponden a otro sub-equipo:
 
 El arnés ya utiliza `gestion_entradas_reloj/rtl/entradas_reloj.sv` para BTNU,
 BTNC, BTND y la habilitación de un segundo. Las letras se reciben desde la PC
-por UART; la visualización sigue siendo provisional hasta integrar su bloque.
+por el periférico UART. La FPGA devuelve mensajes de inicio, resultado de cada
+letra y final de partida según `comunicacion_pc/docs/protocolo_uart.md`. La
+visualización sigue siendo provisional hasta integrar su bloque definitivo.
 
 ## Cómo simular cada bloque en Vivado
 Agregar SOLO los archivos de `rtl/` de un bloque como Design Sources, y su
