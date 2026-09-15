@@ -40,3 +40,18 @@ prueba `top_prueba_uart_eco.vhd` devuelve inmediatamente cada byte recibido.
 Así, al escribir `A` en la terminal deben aparecer dos `A`: una corresponde al
 eco local de la terminal y otra es la respuesta enviada por la FPGA. Si el eco
 local está desactivado, aparece solamente la respuesta de la FPGA.
+
+## Banco de registros UART
+
+El archivo `rtl/banco_registros_uart.sv` implementa la interfaz común de 32
+bits solicitada en el instructivo:
+
+| `addr_i` | Registro | Campos utilizados |
+|---|---|---|
+| `00` | `DATA_TX` | `[7:0]`: byte que se enviará |
+| `01` | `DATA_RX` | `[7:0]`: último byte recibido |
+| `10` | `CONTROL` | bit 0: `send`, bit 1: `new_rx` |
+| `11` | Reservado | lectura igual a cero |
+
+`send` permanece activo hasta recibir `tx_done`. `new_rx` se activa cuando
+llega un byte y se limpia escribiendo cero en el bit 1 de `CONTROL`.
