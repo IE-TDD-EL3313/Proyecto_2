@@ -1,4 +1,7 @@
 ## ============================================================================
+
+set_property CFGBVS VCCO [current_design]
+set_property CONFIG_VOLTAGE 3.3 [current_design]
 ## ahorcado_test.xdc
 ## Constraints para top_test_ahorcado.sv en el Nexys4 (rev B).
 ## Basado en Nexys-4-Master.xdc; solo se descomentan y renombran los pines
@@ -12,7 +15,7 @@ set_property PACKAGE_PIN E3 [get_ports clk]
     create_clock -add -name sys_clk_pin -period 10.00 -waveform {0 5} [get_ports clk]
 
 ## ---------------- Botones ----------------
-## CPU RESET: activo en ALTO (ver top_test_ahorcado.sv: rst_n = ~btnCpuReset)
+## CPU RESET: activo en BAJO; se conecta directamente a rst_n
 set_property PACKAGE_PIN C12 [get_ports btnCpuReset]
     set_property IOSTANDARD LVCMOS33 [get_ports btnCpuReset]
 
@@ -23,6 +26,10 @@ set_property PACKAGE_PIN E16 [get_ports btnC]
 ## BTNU = sel_pulse (alternar dificultad)
 set_property PACKAGE_PIN F15 [get_ports btnU]
     set_property IOSTANDARD LVCMOS33 [get_ports btnU]
+
+## BTND = rst_pulse (reiniciar el juego sin reiniciar la electronica)
+set_property PACKAGE_PIN V10 [get_ports btnD]
+    set_property IOSTANDARD LVCMOS33 [get_ports btnD]
 
 ## BTNR = nueva_letra (envia la letra puesta en sw[4:0])
 set_property PACKAGE_PIN R10 [get_ports btnR]

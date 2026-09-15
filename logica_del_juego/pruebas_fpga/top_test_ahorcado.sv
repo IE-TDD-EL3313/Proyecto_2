@@ -5,12 +5,13 @@
 // ya validados por simulacion: Gestion de Palabras, Gestion del Tiempo, y
 // Control y Coordinacion del Juego.
 //
-// No incluye UART, LCD, ni el disenio final de entradas/salidas locales
-// (esos bloques son responsabilidad de otros sub-equipos). En su lugar:
+// No incluye UART ni LCD. Para las entradas y el reloj utiliza el bloque
+// definitivo gestion_entradas_reloj. En este arnes:
 //   - "letra" a adivinar: se ingresa con sw[4:0] (codigo 1-26, A=00001) y
 //     se envia con BTNR (pulso "nueva_letra").
 //   - BTNU = sel_pulse (cambia dificultad), BTNC = ok_pulse (confirma/inicia)
-//   - BTN CPU RESET = rst_pulse / reset general
+//   - BTND = rst_pulse (reinicia el juego)
+//   - CPU_RESETN = reset electronico activo en bajo
 //   - LEDs: ver mapeo abajo.
 //   - 7 segmentos: 2 digitos de tiempo restante + 2 digitos de partidas
 //     ganadas (igual que pide la especificacion final del proyecto).
@@ -20,6 +21,7 @@ module top_test_ahorcado (
     input  logic        btnCpuReset,  // activo en ALTO en Nexys4
     input  logic        btnC,
     input  logic        btnU,
+    input  logic        btnD,
     input  logic        btnR,
     input  logic [4:0]  sw,           // sw[4:0]: codigo de letra 1-26
     output logic [9:0]  led,
@@ -28,18 +30,28 @@ module top_test_ahorcado (
     output logic        dp
 );
     logic rst_n;
-    assign rst_n = ~btnCpuReset;
+    assign rst_n = btnCpuReset;
     assign dp    = 1'b1; // apagado (activo en bajo)
 
-    // ---------------- Reloj base: tick_1s ----------------
-    logic tick_1s;
-    clk_div_1s u_tick (.clk(clk), .rst_n(rst_n), .tick_1s(tick_1s));
-
-    // ---------------- Botones -> pulsos (sustituto de entradas locales) --
+    // ---------------- Entradas locales y reloj definitivos --------------
     logic ok_pulse, sel_pulse, rst_pulse, nueva_letra;
-    boton_pulso u_btn_ok  (.clk(clk), .rst_n(rst_n), .boton_raw(btnC), .pulso(ok_pulse));
-    boton_pulso u_btn_sel (.clk(clk), .rst_n(rst_n), .boton_raw(btnU), .pulso(sel_pulse));
-    boton_pulso u_btn_rst (.clk(clk), .rst_n(rst_n), .boton_raw(btnCpuReset), .pulso(rst_pulse));
+    logic tick_1s, ce_debounce, ce_display;
+
+    entradas_reloj u_entradas_reloj (
+        .clk         (clk),
+        .rst_n       (rst_n),
+        .btn_sel_i   (btnU),
+        .btn_ok_i    (btnC),
+        .btn_rst_i   (btnD),
+        .sel_pulse   (sel_pulse),
+        .ok_pulse    (ok_pulse),
+        .rst_pulse   (rst_pulse),
+        .ce_debounce (ce_debounce),
+        .ce_1s       (tick_1s),
+        .ce_display  (ce_display)
+    );
+
+    // BTNR solo sustituye la futura recepcion UART durante esta prueba.
     boton_pulso u_btn_let (.clk(clk), .rst_n(rst_n), .boton_raw(btnR), .pulso(nueva_letra));
 
     // codigo de switch (1-26) -> ASCII, para alimentar letra_ascii
