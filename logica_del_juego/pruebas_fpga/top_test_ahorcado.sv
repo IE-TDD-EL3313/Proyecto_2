@@ -18,7 +18,7 @@
 // ============================================================================
 module top_test_ahorcado (
     input  logic        clk,          // 100 MHz (E3)
-    input  logic        btnCpuReset,  // activo en ALTO en Nexys4
+    input  logic        btnCpuReset,  // CPU_RESETN: activo en BAJO
     input  logic        btnC,
     input  logic        btnU,
     input  logic        btnD,
@@ -67,7 +67,11 @@ module top_test_ahorcado (
     logic        palabra_lista;
     logic [11:0] mask_coincidencia;
 
-    gestion_palabras u_palabras (
+    // La prueba fisica usa siempre AMOR para que el resultado sea repetible.
+    // El diseno normal conserva el banco aleatorio porque MODO_PRUEBA vale 0.
+    gestion_palabras #(
+        .MODO_PRUEBA(1'b1)
+    ) u_palabras (
         .clk(clk), .rst_n(rst_n), .dificultad(dificultad),
         .pedir_palabra(pedir_palabra), .letra_in(letra_in), .validar(validar),
         .longitud_palabra(longitud_palabra), .palabra_lista(palabra_lista),

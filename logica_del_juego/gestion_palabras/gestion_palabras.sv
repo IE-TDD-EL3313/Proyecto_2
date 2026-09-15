@@ -10,7 +10,10 @@
 // pedir_palabra en el ciclo N -> palabra_rom disponible en el ciclo N+1 ->
 // letras_palabra/longitud_palabra/palabra_lista se cargan en el ciclo N+1.
 // ============================================================================
-module gestion_palabras (
+module gestion_palabras #(
+    parameter bit          MODO_PRUEBA    = 1'b0,
+    parameter logic [63:0] PALABRA_PRUEBA = 64'h4000000000093DA1 // AMOR
+) (
     input  logic        clk,
     input  logic        rst_n,
     input  logic        dificultad,        // 0=Facil, 1=Dificil
@@ -41,7 +44,13 @@ module gestion_palabras (
     // ---------------- ROM (latencia 1 ciclo) ----------------
     logic [7:0]  direccion_rom;
     logic [63:0] palabra_rom;
-    word_bank_rom u_rom (.direccion(direccion_rom), .palabra_rom(palabra_rom));
+    word_bank_rom #(
+        .MODO_PRUEBA   (MODO_PRUEBA),
+        .PALABRA_PRUEBA(PALABRA_PRUEBA)
+    ) u_rom (
+        .direccion   (direccion_rom),
+        .palabra_rom (palabra_rom)
+    );
 
     logic pedir_d;
     always_ff @(posedge clk or negedge rst_n) begin

@@ -9,24 +9,15 @@ Organizado en 3 bloques funcionales + una carpeta de pruebas de integración.
 - `tb/tb_gestion_palabras.sv` — testbench autoverificable (18 pruebas)
 
 > **NOTA — palabra fijada para pruebas manuales:**
-> `word_bank_rom.sv` está actualmente **fijado** en la palabra `"AMOR"`, para
-> poder probar el flujo completo de una partida en la FPGA (revelar letras,
-> ganar, contar partidas) sabiendo de antemano cuál es la palabra secreta.
-> Mientras quede así, **siempre sale "AMOR"**, sin importar la dificultad ni
-> cuántas veces se reinicie.
+> El diseño normal mantiene la selección de las 50 palabras mediante el LFSR.
+> El arnés `pruebas_fpga/top_test_ahorcado.sv` activa `MODO_PRUEBA`, por lo que
+> en esa prueba física la palabra siempre es `"AMOR"`. Esto permite comprobar
+> aciertos, victoria y conteo de partidas con una palabra conocida.
 >
-> Al final del archivo `word_bank_rom.sv` hay dos líneas: una activa (la
-> palabra fija) y otra comentada (la selección real por índice/LFSR):
-> ```systemverilog
-> always_comb palabra_rom = 64'h4000000000093DA1; // "AMOR"
->
-> // always_comb palabra_rom = rom[direccion[5:0]]; // <-- version normal
-> ```
-> **Antes de la entrega/demo final**, hay que comentar la primera línea y
-> descomentar la segunda, para regresar a la selección pseudoaleatoria real
-> del banco de 50 palabras. El testbench (`tb_gestion_palabras.sv`) espera
-> la versión normal (aleatoria) — si se deja la palabra fija, varias de sus
-> 18 pruebas van a fallar a propósito, como aviso de que quedó en modo prueba.
+> Para cambiar la palabra de prueba se puede modificar el parámetro
+> `PALABRA_PRUEBA`; no es necesario alterar ni comentar la ROM normal. El
+> testbench `tb_gestion_palabras.sv` usa los parámetros por defecto y, por
+> tanto, comprueba la selección normal del banco de 50 palabras.
 
 ## gestion_tiempo/
 - `rtl/temporizador_partida.sv` — FSM de 2 estados (IDLE/CONTANDO) + registros
