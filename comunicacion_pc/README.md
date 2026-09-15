@@ -20,3 +20,10 @@ La computadora envía un carácter por USB-UART y la tarjeta muestra:
 
 La terminal se configura a 115200 baudios, 8N1 y sin control de flujo. El pin
 `C4` conecta la salida del puente USB-UART con `RsRx`.
+
+## UART TX
+
+`rtl/UART_tx.vhd` convierte un byte paralelo en una trama serial 8N1. Un pulso
+en `tx_start` guarda el byte e inicia la transmisión. Al finalizar el bit de
+parada, `tx_rdy` produce un pulso de un ciclo. El divisor predeterminado es 868
+para trabajar a 115200 baudios con el reloj de 100 MHz de la Nexys 4.
