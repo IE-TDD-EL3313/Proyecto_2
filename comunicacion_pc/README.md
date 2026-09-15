@@ -77,3 +77,7 @@ registro CONTROL.
 `rtl/generador_tramas_uart.sv` convierte cada evento del juego en un mensaje
 de 19 bytes y lo envía escribiendo en `DATA_TX` y `CONTROL`. El formato completo
 está documentado en `docs/protocolo_uart.md`.
+
+`rtl/formador_patron_ascii.sv` prepara los 12 caracteres del patrón: muestra
+las letras acertadas, usa `_` en posiciones ocultas y completa con espacios las
+posiciones que quedan fuera de la longitud de la palabra.

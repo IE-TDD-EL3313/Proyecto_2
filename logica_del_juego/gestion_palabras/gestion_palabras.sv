@@ -22,7 +22,8 @@ module gestion_palabras #(
     input  logic        validar,           // pulso, 1 ciclo
     output logic [3:0]  longitud_palabra,
     output logic        palabra_lista,     // pulso, 1 ciclo
-    output logic [11:0] mask_coincidencia
+    output logic [11:0] mask_coincidencia,
+    output logic [59:0] palabra_codificada // 12 letras, 5 bits por letra
 );
 
     // ---------------- LFSR ----------------
@@ -66,6 +67,11 @@ module gestion_palabras #(
 
     // ---------------- Registro Palabra + Comparador ----------------
     logic [4:0] letras_palabra [0:11];
+
+    always_comb begin
+        for (int i = 0; i < 12; i++)
+            palabra_codificada[(i*5) +: 5] = letras_palabra[i];
+    end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
