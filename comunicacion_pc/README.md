@@ -81,3 +81,7 @@ está documentado en `docs/protocolo_uart.md`.
 `rtl/formador_patron_ascii.sv` prepara los 12 caracteres del patrón: muestra
 las letras acertadas, usa `_` en posiciones ocultas y completa con espacios las
 posiciones que quedan fuera de la longitud de la palabra.
+
+`rtl/coordinador_eventos_uart.sv` guarda por separado los eventos de inicio,
+letra y final. Si una letra completa la palabra, conserva tanto su respuesta
+como el resultado final y los entrega al generador en ese orden.
