@@ -55,3 +55,10 @@ bits solicitada en el instructivo:
 
 `send` permanece activo hasta recibir `tx_done`. `new_rx` se activa cuando
 llega un byte y se limpia escribiendo cero en el bit 1 de `CONTROL`.
+
+## Control UART
+
+`rtl/control_uart.sv` genera un único pulso `tx_start` cuando el registro
+`send` solicita una transmisión. Mientras TX trabaja mantiene `busy` activo y
+no acepta otra solicitud. Al recibir `tx_done`, genera `tx_complete` para que
+el banco limpie `send`. También entrega el pulso de recepción como `rx_event`.
