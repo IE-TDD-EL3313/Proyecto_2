@@ -877,7 +877,7 @@ T_{bit}=\frac{1}{115200}
 $$
 
 $$
-T_{bit}\approx8.68\,\mu s
+T_{bit}\approx8.68\\mu s
 $$
 
 Debido a que una trama completa contiene 10 bits, el tiempo aproximado para transmitir un byte es:
@@ -887,7 +887,7 @@ T_{byte}=10T_{bit}
 $$
 
 $$
-T_{byte}\approx86.8\,\mu s
+T_{byte}\approx86.8\\mu s
 $$
 
 El sistema implementado en la FPGA utiliza un reloj de **100 MHz**, cuyo período es:
@@ -1349,7 +1349,7 @@ modo → selección de palabra → recepción de letra → validación → repet
 
 El diagrama de tercer nivel muestra la descomposición interna de los bloques del segundo nivel, hasta el grado de detalle que sirvió de base para el diseño en SystemVerilog. Se incluye aquí como referencia general antes de describir cada módulo por separado en la sección 7.
 
-![Diagrama de tercer nivel del sistema](Imagenes/diagrama_bloques_nivel3.png)
+![Diagrama de tercer nivel del sistema](fig/diagrama_bloques_nivel3.png)
 
 **Figura 3.** Diagrama de tercer nivel según el planteamiento del diseño (`docs/diseño/diseño.md`).
 
@@ -1436,7 +1436,7 @@ Además de las salidas anteriores (registradas internamente), `game_core` mantie
  
 <!-- [INTEGRANTE 1] Insertar aquí el diagrama de estados. -->
  
-![Diagrama de estados de game_core](Imagenes/fsm_game_core.png)
+![Diagrama de estados de game_core](fig/fsm_game_core.png)
  
 **Figura 2.** Diagrama de estados de `game_core`: `MENU → GAME → RESULT → MENU`.
  
@@ -2773,31 +2773,551 @@ El módulo no modifica el estado del juego. Su función consiste únicamente en 
 
 ## 8. Aplicación de PC en Python
 
-<!-- [INTEGRANTE 2] -->
+La aplicación desarrollada en Python funciona como la interfaz de usuario del sistema de Ahorcado. Su objetivo principal es permitir al usuario ingresar letras desde la computadora y mostrar la información enviada por la FPGA durante el desarrollo de la partida.
+
+La aplicación no implementa la lógica del juego. La selección de la palabra, validación de las letras, control de intentos, temporización y determinación de victoria o derrota se realizan dentro de la FPGA. La computadora funciona únicamente como una terminal de entrada y salida.
+
+La comunicación entre ambos dispositivos se realiza mediante UART a **115200 baudios, 8 bits de datos, sin paridad y un bit de parada (8N1)**.
 
 ### 8.1 Arquitectura de la aplicación
 
-<!-- Uso de pyserial, configuración del puerto, hilo principal de entrada
-del usuario, hilo receptor de mensajes de la FPGA. -->
+La aplicación utiliza la biblioteca `pyserial` para acceder al puerto serial de la computadora.
+
+La configuración utilizada es:
+
+```python
+ser = serial.Serial(
+    port=PORT,
+    baudrate=115200,
+    bytesize=8,
+    parity="N",
+    stopbits=1,
+    timeout=0.1
+)
+```
+
+El parámetro `PORT` identifica el puerto serial asociado con la tarjeta FPGA. En la implementación utilizada durante el desarrollo se configuró:
+
+```python
+PORT = "COM3"
+BAUD = 115200
+```
+
+El número de puerto puede modificarse dependiendo de la computadora donde se ejecute la aplicación.
+
+La arquitectura general puede representarse como:
+
+```text
+                     Aplicación Python
+                           │
+             ┌─────────────┴─────────────┐
+             │                           │
+             ▼                           ▼
+      Hilo principal              Hilo receptor
+             │                           │
+      Entrada del usuario          Lectura UART
+             │                           │
+      Validación A-Z              Procesar paquetes
+             │                           │
+             ▼                           ▼
+        ser.write()                 Mostrar estado
+             │                           ▲
+             └──────────┐     ┌──────────┘
+                        ▼     │
+                      Puerto serial
+                           │
+                           ▼
+                          FPGA
+```
+
+#### Hilo principal
+
+El hilo principal se encarga principalmente de solicitar una letra al usuario, validar la entrada y transmitirla hacia la FPGA.
+
+El flujo general es:
+
+```text
+Solicitar entrada
+      │
+      ▼
+Convertir a mayúscula
+      │
+      ▼
+Validar entrada
+      │
+      ▼
+Transmitir letra
+      │
+      └────────► repetir
+```
+
+La transmisión se realiza mediante:
+
+```python
+ser.write(entrada.encode("ascii"))
+```
+
+De esta manera, una letra como:
+
+```text
+A
+```
+
+se convierte en su representación ASCII antes de ser transmitida.
+
+#### Hilo receptor
+
+La recepción de información se ejecuta en un hilo independiente. Esto permite que la aplicación continúe recibiendo mensajes enviados por la FPGA aunque el hilo principal se encuentre esperando una entrada del usuario.
+
+Este comportamiento es importante porque la FPGA puede generar eventos independientemente de cuándo el usuario escriba una letra, por ejemplo:
+
+- inicio de una partida;
+- resultado del procesamiento de una letra;
+- victoria;
+- derrota por intentos;
+- derrota por tiempo.
+
+El uso de dos hilos permite separar:
+
+```text
+Entrada del usuario  ←→  Recepción de eventos
+```
+
+sin que una de estas operaciones bloquee completamente a la otra.
+
+---
 
 ### 8.2 Validación de entrada
 
-<!-- Validación de una sola letra A–Z antes de transmitir. -->
+Antes de transmitir información hacia la FPGA, la aplicación verifica que la entrada introducida por el usuario corresponda a una única letra válida.
+
+Inicialmente, la entrada se procesa mediante:
+
+```python
+entrada = entrada.strip().upper()
+```
+
+`strip()` elimina espacios adicionales al inicio y al final, mientras que `upper()` convierte letras minúsculas a mayúsculas.
+
+Por ejemplo:
+
+```text
+Entrada:   a
+Procesada: A
+```
+
+Posteriormente se verifica que la entrada contenga exactamente un carácter y que este pertenezca al rango alfabético permitido:
+
+```text
+A - Z
+```
+
+El flujo de validación puede representarse como:
+
+```text
+Entrada del usuario
+        │
+        ▼
+ strip() + upper()
+        │
+        ▼
+¿Tiene un carácter?
+      /       \
+    No         Sí
+    │           │
+    ▼           ▼
+ Rechazar    ¿A ≤ letra ≤ Z?
+                /       \
+              No         Sí
+              │           │
+              ▼           ▼
+           Rechazar    Transmitir
+```
+
+Por ejemplo:
+
+| Entrada | Resultado |
+|---|---|
+| `a` | Se convierte a `A` y se transmite |
+| `M` | Se transmite |
+| `abc` | Se rechaza |
+| `5` | Se rechaza |
+| `@` | Se rechaza |
+| Entrada vacía | Se rechaza |
+
+Esta validación evita transmitir datos innecesarios hacia la FPGA.
+
+Adicionalmente, `uart_game_interface` realiza una segunda validación en hardware:
+
+```systemverilog
+if (rx_byte >= "A" && rx_byte <= "Z")
+```
+
+Por lo tanto, la validación se realiza en ambos extremos:
+
+```text
+Python                         FPGA
+
+Entrada
+   │
+   ▼
+Validación A-Z
+   │
+   ▼
+UART ───────────────────────► uart_game_interface
+                                  │
+                                  ▼
+                            Validación A-Z
+                                  │
+                                  ▼
+                              game_core
+```
+
+Esto permite que un dato inválido no llegue a la lógica principal del juego incluso si fuese recibido por el UART.
+
+---
 
 ### 8.3 Interpretación de paquetes
 
-<!-- Búsqueda del encabezado 0xA5 e interpretación de los tres tipos de
-paquete (inicio, resultado de letra, resultado final). -->
+La FPGA utiliza paquetes estructurados para informar a la aplicación sobre los diferentes eventos de la partida.
+
+Todos los paquetes comienzan con el byte:
+
+```text
+0xA5
+```
+
+Este valor funciona como encabezado o byte de sincronización.
+
+El hilo receptor examina continuamente los bytes provenientes del puerto serial hasta encontrar `0xA5`. Una vez detectado, el siguiente byte determina el tipo de paquete.
+
+```text
+Flujo UART
+    │
+    ▼
+Buscar 0xA5
+    │
+    ▼
+Leer tipo
+    │
+    ├── 0x01 → Inicio
+    │
+    ├── 0x02 → Resultado de letra
+    │
+    └── 0x03 → Resultado final
+```
+
+#### Paquete de inicio
+
+El paquete de inicio posee la siguiente estructura:
+
+```text
+A5 01 MODO LONGITUD
+```
+
+con un total de **4 bytes**.
+
+| Posición | Campo | Descripción |
+|---:|---|---|
+| 0 | `0xA5` | Encabezado |
+| 1 | `0x01` | Tipo: inicio |
+| 2 | `MODO` | Modo de dificultad |
+| 3 | `LONGITUD` | Longitud de la palabra |
+
+Este paquete se genera cuando la FPGA detecta el comienzo de una nueva partida.
+
+La aplicación interpreta sus campos y muestra al usuario la información inicial correspondiente.
+
+#### Paquete de resultado de letra
+
+Después de que la FPGA procesa una letra, transmite:
+
+```text
+A5 02 LETRA RESULTADO INTENTOS LONGITUD PATRON[12]
+```
+
+con un total de **18 bytes**.
+
+| Posición | Campo | Descripción |
+|---:|---|---|
+| 0 | `0xA5` | Encabezado |
+| 1 | `0x02` | Tipo: resultado de letra |
+| 2 | `LETRA` | Letra procesada |
+| 3 | `RESULTADO` | Resultado de la letra |
+| 4 | `INTENTOS` | Intentos restantes |
+| 5 | `LONGITUD` | Longitud de la palabra |
+| 6–17 | `PATRON[12]` | Estado visible de la palabra |
+
+El resultado se codifica como:
+
+```text
+0x01 → letra correcta
+0x02 → letra incorrecta
+0x03 → letra repetida
+```
+
+El patrón contiene la representación actual de la palabra. Las posiciones que todavía no han sido descubiertas se representan mediante `_`.
+
+Por ejemplo:
+
+```text
+Palabra real:     CASA
+Patrón recibido:  _A_A
+```
+
+De esta manera, Python no necesita determinar qué letras deberían mostrarse; únicamente presenta la información calculada por la FPGA.
+
+#### Paquete de resultado final
+
+Cuando termina una partida, la FPGA transmite:
+
+```text
+A5 03 RESULTADO CAUSA LONGITUD PALABRA[12]
+```
+
+con un total de **17 bytes**.
+
+| Posición | Campo | Descripción |
+|---:|---|---|
+| 0 | `0xA5` | Encabezado |
+| 1 | `0x03` | Tipo: resultado final |
+| 2 | `RESULTADO` | Victoria o derrota |
+| 3 | `CAUSA` | Causa de finalización |
+| 4 | `LONGITUD` | Longitud de la palabra |
+| 5–16 | `PALABRA[12]` | Palabra completa |
+
+La causa se codifica como:
+
+```text
+0x01 → victoria
+0x02 → derrota por seis errores
+0x03 → derrota por tiempo
+```
+
+El paquete incluye la palabra completa, por lo que la aplicación puede mostrarla al usuario al finalizar la partida.
+
+#### Lectura exacta de paquetes
+
+La comunicación serial puede entregar los bytes de un paquete en diferentes instantes. Por esta razón, no debe suponerse que una única operación de lectura retornará inmediatamente todos los bytes solicitados.
+
+Para manejar esta situación se utiliza la función:
+
+```python
+leer_exactamente(cantidad)
+```
+
+Esta función continúa leyendo hasta obtener la cantidad de bytes requerida para completar el paquete.
+
+Conceptualmente:
+
+```text
+Necesito N bytes
+      │
+      ▼
+Leer disponibles
+      │
+      ▼
+¿Tengo N bytes?
+    /       \
+   No        Sí
+   │          │
+   └─ leer    ▼
+           procesar
+```
+
+Esto permite reconstruir correctamente los paquetes antes de interpretar sus campos.
+
+---
 
 ### 8.4 Manejo de errores
 
-<!-- Entradas inválidas, pérdida de conexión, cierre del puerto. -->
+La aplicación incorpora diferentes mecanismos para evitar que entradas inválidas o problemas de comunicación produzcan un comportamiento incorrecto.
+
+#### Entradas inválidas
+
+Una entrada que no corresponda a una única letra entre `A` y `Z` no se transmite.
+
+Esto incluye:
+
+```text
+números
+símbolos
+cadenas de varias letras
+entradas vacías
+```
+
+La aplicación informa al usuario y solicita nuevamente una entrada válida.
+
+#### Sincronización de paquetes
+
+El receptor utiliza `0xA5` como byte de sincronización. Los bytes recibidos que no correspondan al encabezado esperado no se interpretan directamente como un paquete.
+
+Una vez encontrado:
+
+```text
+0xA5
+```
+
+se analiza el byte de tipo y se lee la cantidad de información correspondiente.
+
+Este mecanismo facilita recuperar la interpretación correcta del flujo serial cuando el receptor comienza a leer en una posición que no corresponde al inicio de un paquete.
+
+#### Tiempo de espera del puerto
+
+El puerto se configura con:
+
+```python
+timeout=0.1
+```
+
+Esto evita que una operación de lectura individual permanezca bloqueada indefinidamente esperando datos.
+
+#### Cierre de la aplicación
+
+La aplicación reconoce el comando:
+
+```text
+SALIR
+```
+
+para finalizar la ejecución solicitada por el usuario.
+
+Antes de terminar, el puerto serial debe cerrarse correctamente, liberando el recurso utilizado por el sistema operativo.
+
+De esta forma se evita mantener el puerto ocupado después de finalizar la aplicación.
+
+Ante una excepción o pérdida de comunicación, la aplicación debe finalizar de forma controlada y cerrar el objeto serial cuando sea posible.
+
+---
 
 ### 8.5 Instrucciones de ejecución
 
-<!-- Cómo instalar dependencias y ejecutar la aplicación. -->
+Para ejecutar la aplicación se requiere tener instalado **Python 3** y la biblioteca `pyserial`.
 
----
+#### 1. Instalar Python
+
+Debe verificarse que Python se encuentre disponible mediante:
+
+```bash
+python --version
+```
+
+o, dependiendo de la instalación:
+
+```bash
+python3 --version
+```
+
+#### 2. Instalar `pyserial`
+
+La dependencia utilizada para la comunicación UART puede instalarse mediante:
+
+```bash
+pip install pyserial
+```
+
+#### 3. Conectar y programar la FPGA
+
+Antes de ejecutar la aplicación se debe:
+
+1. Conectar la tarjeta FPGA a la computadora.
+2. Programar la FPGA con el bitstream correspondiente al proyecto.
+3. Identificar el puerto serial asignado por el sistema operativo.
+
+#### 4. Configurar el puerto
+
+En `juego_uart.py` se debe seleccionar el puerto correspondiente.
+
+Por ejemplo:
+
+```python
+PORT = "COM3"
+BAUD = 115200
+```
+
+El valor de `COM3` es únicamente el utilizado durante la implementación y debe sustituirse si el sistema operativo asigna otro puerto.
+
+La velocidad debe mantenerse en:
+
+```text
+115200 baudios
+```
+
+para coincidir con la configuración implementada en la FPGA.
+
+#### 5. Ejecutar la aplicación
+
+Desde una terminal ubicada en el directorio donde se encuentra el archivo:
+
+```bash
+python juego_uart.py
+```
+
+Si el sistema utiliza el comando `python3`:
+
+```bash
+python3 juego_uart.py
+```
+
+#### 6. Interactuar con el juego
+
+Una vez establecida la comunicación, la aplicación recibe los mensajes generados por la FPGA y permite introducir letras.
+
+Cada entrada válida debe corresponder a una única letra:
+
+```text
+A
+B
+C
+...
+Z
+```
+
+La aplicación muestra los eventos enviados por la FPGA, incluyendo el inicio de la partida, el resultado de cada letra, el patrón actualizado, los intentos restantes y el resultado final.
+
+Para finalizar manualmente la aplicación puede utilizarse:
+
+```text
+SALIR
+```
+
+El flujo completo de funcionamiento puede resumirse como:
+
+```text
+Programar FPGA
+      │
+      ▼
+Conectar UART
+      │
+      ▼
+Ejecutar juego_uart.py
+      │
+      ▼
+Esperar paquete de inicio
+      │
+      ▼
+Ingresar letra A-Z
+      │
+      ▼
+Python envía ASCII
+      │
+      ▼
+FPGA procesa letra
+      │
+      ▼
+FPGA envía paquete
+      │
+      ▼
+Python interpreta y muestra
+      │
+      ▼
+¿Terminó la partida?
+   /             \
+ No               Sí
+ │                 │
+ └─ nueva letra    ▼
+              Mostrar resultado
+```
 
 ## 9. Asignación de pines
 
@@ -2852,7 +3372,7 @@ resultado (PASS/FAIL). -->
 TESTBENCH COMPLETO: PASS (753 comprobaciones)
 ```
 
-![Consola del testbench integrado](Imagenes/consola_testbench_completo.png)
+![Consola del testbench integrado](fig/consola_testbench_completo.png)
 
 **Figura 3.** Resultado del testbench integrado `tb_hangman_completo`.
 
@@ -2889,27 +3409,27 @@ derrota por tiempo, paquetes UART de letra y resultado. -->
 
 #### Pantalla de selección de modo
 
-![Menú fácil y difícil en LCD](Imagenes/lcd_menu.jpg)
+![Menú fácil y difícil en LCD](fig/lcd_menu.jpg)
 
 **Figura 5.** Pantalla de selección de modo mostrando fácil/difícil en el LCD.
 
 #### Partida en curso
 
-![Palabra oculta y letras reveladas](Imagenes/lcd_partida.jpg)
+![Palabra oculta y letras reveladas](fig/lcd_partida.jpg)
 
 **Figura 6.** LCD mostrando la palabra parcialmente revelada, los intentos
 restantes y el tiempo en los displays de siete segmentos.
 
 #### Victoria y derrota
 
-![Resultado final en LCD](Imagenes/lcd_resultado.jpg)
+![Resultado final en LCD](fig/lcd_resultado.jpg)
 
 **Figura 7.** Pantalla de resultado final (victoria / derrota) y contador
 acumulado de victorias en los displays.
 
 #### Comunicación con la aplicación de PC
 
-![Terminal Python durante una partida](Imagenes/python_terminal.png)
+![Terminal Python durante una partida](fig/python_terminal.png)
 
 **Figura 8.** Consola de la aplicación de Python mostrando el envío de
 letras y la recepción del estado de la partida.
@@ -2925,7 +3445,7 @@ evidencia. -->
 <!-- OBLIGATORIO: fotografía del montaje físico completo en la Basys 3,
 mostrando LCD, displays encendidos, LED y conexión al buzzer/PC. -->
 
-![Sistema completo montado en la Basys 3](Imagenes/foto_sistema_fpga.jpg)
+![Sistema completo montado en la Basys 3](figfoto_sistema_fpga.jpg)
 
 **Figura 9.** Sistema completo implementado sobre la tarjeta Basys 3,
 incluyendo el módulo LCD PmodCLP, displays de siete segmentos y conexión
@@ -2962,17 +3482,17 @@ WHS (hold slack) = ___ ns
 <!-- Confirmar explícitamente si se cumple el timing a 100 MHz (WNS ≥ 0 y
 TNS = 0) y adjuntar la captura del reporte. -->
 
-![Reporte de timing de Vivado](Imagenes/timing_summary.png)
+![Reporte de timing de Vivado](fig/timing_summary.png)
 
 **Figura 10.** Resumen de timing post-implementación para `hangman_top_completo`.
 
 #### Evidencia de síntesis e implementación
 
-![RTL elaborado](Imagenes/rtl_elaborado.png)
+![RTL elaborado](fig/rtl_elaborado.png)
 
 **Figura 11.** Esquemático RTL elaborado de `hangman_top_completo`.
 
-![Diseño implementado en el dispositivo](Imagenes/device_implementado.png)
+![Diseño implementado en el dispositivo](fig/device_implementado.png)
 
 **Figura 12.** Vista del diseño implementado sobre el dispositivo FPGA
 (Device view de Vivado).
