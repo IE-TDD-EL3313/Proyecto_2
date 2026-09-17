@@ -136,13 +136,13 @@ $$
 por lo tanto:
 
 $$
-T_{bit}\approx 8.68\,\mu s
+T_{bit}\approx 8.68\mu s
 $$
 
 Como cada trama contiene diez bits en total —un bit de inicio, ocho bits de datos y un bit de parada—, el tiempo aproximado requerido para transmitir un byte es:
 
 $$
-T_{byte}=10(8.68\,\mu s)\approx86.8\,\mu s
+T_{byte}=10(8.68\mu s)\approx86.8\mu s
 $$
 
 La FPGA utiliza un reloj principal de 100 MHz, correspondiente a un período de 10 ns. Por esta razón, el número aproximado de ciclos de reloj disponibles durante la transmisión de cada bit UART es:
@@ -328,27 +328,463 @@ La estructura propuesta mantiene toda la lógica de control de la partida dentro
 
 ### 3.3 Interfaz estándar de periféricos (bus de 32 bits)
 
-<!-- [INTEGRANTE 2] Tabla de señales `clk_i`, `rst_i`, `write_enable_i`,
-`addr_i[1:0]`, `wdata_i[31:0]`, `rdata_o[31:0]` y su significado. -->
+Para facilitar la integración entre los diferentes módulos del sistema, los periféricos UART y LCD utilizan una interfaz digital común de **32 bits**. Esta interfaz permite realizar operaciones de lectura y escritura sobre los registros internos de cada periférico mediante un esquema de direccionamiento sencillo.
+
+La interfaz está compuesta por las siguientes señales:
+
+| Señal | Dirección | Ancho | Descripción |
+|---|---|---:|---|
+| `clk_i` | Entrada | 1 bit | Reloj principal utilizado para sincronizar las operaciones del periférico |
+| `rst_i` | Entrada | 1 bit | Señal de reinicio del periférico |
+| `write_enable_i` | Entrada | 1 bit | Habilita una operación de escritura cuando se encuentra en `1` |
+| `addr_i` | Entrada | 2 bits | Selecciona uno de los registros internos del periférico |
+| `wdata_i` | Entrada | 32 bits | Contiene el dato que se desea escribir en el registro seleccionado |
+| `rdata_o` | Salida | 32 bits | Contiene el dato leído desde el registro seleccionado |
+
+El campo de dirección `addr_i[1:0]` permite seleccionar hasta cuatro registros diferentes:
+
+| `addr_i[1:0]` | Registro seleccionable |
+|---|---|
+| `2'b00` | Registro 0 |
+| `2'b01` | Registro 1 |
+| `2'b10` | Registro 2 |
+| `2'b11` | Registro 3 |
+
+El funcionamiento general de la interfaz depende del valor de `write_enable_i`.
+
+Cuando:
+
+```text
+write_enable_i = 1
+```
+
+se realiza una operación de **escritura**, por lo que el periférico utiliza `addr_i` para seleccionar el registro que será modificado y toma la información presente en `wdata_i[31:0]`.
+
+De forma general:
+
+```text
+                 addr_i[1:0]
+                      │
+                      ▼
+                ┌───────────┐
+wdata_i[31:0] ─►│ Periférico│
+                │           │
+write_enable=1 ─►│ Registros │
+                └───────────┘
+```
+
+Cuando:
+
+```text
+write_enable_i = 0
+```
+
+la operación corresponde a una **lectura**. En este caso, `addr_i` selecciona el registro interno cuyo contenido se coloca en `rdata_o[31:0]`.
+
+```text
+                 addr_i[1:0]
+                      │
+                      ▼
+                ┌───────────┐
+                │ Periférico│
+                │           │────► rdata_o[31:0]
+write_enable=0 ─►│ Registros │
+                └───────────┘
+```
+
+El uso de una interfaz común permite que los módulos encargados de controlar el UART y el LCD accedan a sus respectivos periféricos de una manera uniforme. Aunque los registros internos y la función de cada periférico son diferentes, el mecanismo utilizado para leerlos y escribirlos se mantiene igual.
+
+---
 
 ### 3.4 Registros del periférico UART
 
-<!-- [INTEGRANTE 2] Mapa de registros: DATA_TX (00), DATA_RX (01),
-CONTROL/STATUS (10), con bits `send`/`tx_busy`, `new_rx`, campos de datos. -->
+El periférico UART utiliza tres direcciones de la interfaz estándar para almacenar los datos de transmisión, los datos recibidos y la información de control y estado.
+
+El mapa de registros utilizado se muestra en la siguiente tabla:
+
+| `addr_i[1:0]` | Registro | Función |
+|---|---|---|
+| `2'b00` | `DATA_TX` | Almacena el byte que será transmitido por UART |
+| `2'b01` | `DATA_RX` | Almacena el último byte recibido por UART |
+| `2'b10` | `CONTROL/STATUS` | Controla la transmisión e informa el estado de recepción |
+| `2'b11` | Reservado | No utilizado |
+
+#### Registro `DATA_TX`
+
+El registro `DATA_TX`, ubicado en la dirección:
+
+```text
+addr_i = 2'b00
+```
+
+se utiliza para almacenar el dato que será transmitido hacia la computadora.
+
+Aunque la interfaz de periféricos posee un ancho de 32 bits, el protocolo UART transmite datos de 8 bits. Por esta razón, solamente los bits `[7:0]` contienen información útil.
+
+| Bits | Campo | Descripción |
+|---|---|---|
+| `[7:0]` | `DATA_TX` | Byte que será transmitido |
+| `[31:8]` | Reservado | No utilizado para el dato UART |
+
+El proceso general de transmisión es:
+
+```text
+wdata_i[7:0]
+      │
+      ▼
+   DATA_TX
+      │
+      ▼
+Transmisor UART
+      │
+      ▼
+    uart_tx
+      │
+      ▼
+      PC
+```
+
+Primero se escribe el byte que se desea transmitir en `DATA_TX`. Posteriormente, mediante el registro `CONTROL/STATUS`, se solicita al periférico que inicie la transmisión.
+
+#### Registro `DATA_RX`
+
+El registro `DATA_RX`, ubicado en:
+
+```text
+addr_i = 2'b01
+```
+
+almacena el último byte recibido desde la computadora.
+
+| Bits | Campo | Descripción |
+|---|---|---|
+| `[7:0]` | `DATA_RX` | Byte recibido mediante UART |
+| `[31:8]` | Reservado | Sin información del dato recibido |
+
+El flujo general de recepción es:
+
+```text
+      PC
+      │
+      ▼
+   uart_rx
+      │
+      ▼
+Receptor UART
+      │
+      ▼
+   DATA_RX
+      │
+      ▼
+uart_game_interface
+      │
+      ▼
+ Lógica del juego
+```
+
+Cuando el receptor completa correctamente la recepción de un byte, este se almacena en `DATA_RX` y se genera la indicación correspondiente de que existe un nuevo dato disponible.
+
+#### Registro `CONTROL/STATUS`
+
+El registro `CONTROL/STATUS`, ubicado en:
+
+```text
+addr_i = 2'b10
+```
+
+contiene las señales necesarias para iniciar una transmisión y determinar si existe un nuevo dato recibido.
+
+Los campos principales utilizados son:
+
+| Bit | Campo | Función |
+|---:|---|---|
+| 0 | `send` / estado de transmisión | Permite iniciar o indicar el estado de una transferencia UART |
+| 1 | `new_rx` | Indica que se ha recibido un nuevo byte |
+| `[31:2]` | Reservados | Sin uso para las funciones principales |
+
+El campo `send` se relaciona con el proceso de transmisión. Una vez almacenado el byte correspondiente en `DATA_TX`, este campo permite solicitar el inicio de la transferencia.
+
+Durante la transmisión, el periférico mantiene internamente el estado necesario para evitar iniciar una nueva transferencia antes de finalizar la actual.
+
+Por otra parte, `new_rx` indica que el receptor UART ha completado la recepción de un nuevo byte y que este se encuentra disponible en `DATA_RX`.
+
+El controlador que utiliza el periférico debe leer el dato recibido y posteriormente limpiar la indicación `new_rx`, permitiendo identificar correctamente la llegada del siguiente byte.
+
+El procedimiento de recepción puede resumirse como:
+
+```text
+Byte recibido
+     │
+     ▼
+ DATA_RX ← byte
+     │
+     ▼
+ new_rx = 1
+     │
+     ▼
+Controlador detecta new_rx
+     │
+     ▼
+Lee DATA_RX
+     │
+     ▼
+Limpia new_rx
+```
+
+De esta forma, los registros `DATA_TX`, `DATA_RX` y `CONTROL/STATUS` permiten separar la transferencia física de los datos de la lógica encargada de interpretar el protocolo del juego.
+
+---
 
 ### 3.5 Registros del periférico LCD
 
-<!-- [INTEGRANTE 2] Mapa de registros CONTROL/STATUS (00) y DATA (01):
-bits start, rs, clear, home, busy, done. Secuencia de inicialización del
-HD44780 (38h, 0Ch, 01h, 06h). -->
+El periférico LCD también utiliza la interfaz estándar de 32 bits. Para su operación se definieron dos registros principales: `CONTROL/STATUS` y `DATA`.
+
+El mapa de registros es:
+
+| `addr_i[1:0]` | Registro | Función |
+|---|---|---|
+| `2'b00` | `CONTROL/STATUS` | Control y estado del periférico LCD |
+| `2'b01` | `DATA` | Dato o comando que será enviado al LCD |
+| `2'b10` | Reservado | No utilizado |
+| `2'b11` | Reservado | No utilizado |
+
+#### Registro `CONTROL/STATUS`
+
+El registro `CONTROL/STATUS` permite iniciar operaciones sobre el LCD, seleccionar si la información enviada corresponde a un comando o a un carácter, solicitar operaciones especiales y conocer el estado actual del periférico.
+
+Los campos utilizados son:
+
+| Bit | Campo | Tipo | Función |
+|---:|---|---|---|
+| 0 | `start` | Control | Inicia una operación con el LCD |
+| 1 | `rs` | Control | Selecciona entre comando (`0`) y dato (`1`) |
+| 2 | `clear` | Control | Solicita limpiar la pantalla |
+| 3 | `home` | Control | Solicita regresar el cursor a la posición inicial |
+| 8 | `busy` | Estado | Indica que el periférico se encuentra ocupado |
+| 9 | `done` | Estado | Indica la finalización de una operación |
+| `[31:10]` | Reservado | — | Sin uso |
+| `[7:4]` | Reservado | — | Sin uso |
+
+##### Campo `start`
+
+El bit `start` solicita al periférico iniciar una nueva operación utilizando la información previamente almacenada en el registro `DATA` y la configuración del campo `rs`.
+
+Una vez aceptada la solicitud, el periférico realiza internamente la secuencia temporal requerida por el controlador del LCD.
+
+##### Campo `rs`
+
+El campo `rs` determina la interpretación del byte almacenado en `DATA`:
+
+```text
+rs = 0 → comando
+rs = 1 → carácter/dato
+```
+
+Por ejemplo, un valor como `0x01` con `rs = 0` corresponde a una instrucción para el LCD, mientras que un código ASCII como `0x41` con `rs = 1` corresponde al carácter `A`.
+
+##### Campo `clear`
+
+El campo `clear` solicita una operación de limpieza de pantalla. Esta operación corresponde al comando:
+
+```text
+0x01
+```
+
+del controlador compatible con HD44780.
+
+##### Campo `home`
+
+El campo `home` solicita regresar el cursor a su posición inicial sin utilizarlo como una escritura normal de carácter.
+
+##### Campo `busy`
+
+El bit `busy` indica que el periférico se encuentra realizando una operación.
+
+```text
+busy = 0 → periférico disponible
+busy = 1 → periférico ocupado
+```
+
+Mientras `busy` se encuentra activo, el controlador debe esperar antes de solicitar una nueva operación.
+
+##### Campo `done`
+
+El campo `done` permite indicar que la última operación aceptada por el periférico ha finalizado.
+
+De forma simplificada:
+
+```text
+Solicitud
+   │
+   ▼
+start = 1
+   │
+   ▼
+busy = 1
+   │
+   ▼
+Operación LCD
+   │
+   ▼
+busy = 0
+done = 1
+```
+
+#### Registro `DATA`
+
+El registro `DATA`, ubicado en:
+
+```text
+addr_i = 2'b01
+```
+
+almacena el byte que será enviado al LCD.
+
+| Bits | Campo | Descripción |
+|---|---|---|
+| `[7:0]` | `data` | Código ASCII o instrucción del LCD |
+| `[31:8]` | Reservado | Sin uso |
+
+El significado de los bits `[7:0]` depende del valor de `rs`.
+
+Por ejemplo:
+
+```text
+DATA = 0x41
+RS   = 1
+```
+
+representa el carácter:
+
+```text
+'A'
+```
+
+mientras que:
+
+```text
+DATA = 0x01
+RS   = 0
+```
+
+representa el comando para limpiar la pantalla.
+
+El flujo general de una escritura puede representarse como:
+
+```text
+        DATA[7:0]
+            │
+            ▼
+     lcd_peripheral
+            │
+       ┌────┴────┐
+       │         │
+      RS       DATA[7:0]
+       │         │
+       └────┬────┘
+            ▼
+        PmodCLP
+```
+
+#### Secuencia de inicialización
+
+Antes de utilizar normalmente la pantalla, el periférico ejecuta una secuencia de inicialización para configurar el controlador LCD.
+
+Los comandos principales utilizados son:
+
+| Comando | Función |
+|---|---|
+| `0x38` | Configura interfaz de 8 bits y operación con dos líneas |
+| `0x0C` | Enciende el display |
+| `0x01` | Limpia el contenido de la pantalla |
+| `0x06` | Configura el incremento automático del cursor |
+
+La secuencia puede resumirse como:
+
+```text
+Encendido
+   │
+   ▼
+  0x38
+   │
+   ▼
+  0x0C
+   │
+   ▼
+  0x01
+   │
+   ▼
+  0x06
+   │
+   ▼
+LCD preparado
+```
+
+El periférico también incorpora los tiempos de espera necesarios entre operaciones, debido a que el controlador del LCD no procesa las instrucciones de forma instantánea. La señal `busy` permite que el controlador de pantalla conozca cuándo puede solicitar una nueva operación.
+
+---
 
 ### 3.6 Requisitos eléctricos
 
-<!-- [INTEGRANTE 1 o 2] Niveles lógicos utilizados (LVCMOS33 de la Basys 3),
-conexión del PmodCLP y de los pulsadores, y cualquier consideración
-eléctrica relevante. -->
+El sistema se implementa sobre una tarjeta **Basys 3**, utilizando el reloj principal de 100 MHz y los diferentes pines de entrada y salida requeridos por los periféricos del proyecto.
 
----
+Las señales digitales externas utilizadas por el diseño se configuran con el estándar lógico:
+
+```text
+LVCMOS33
+```
+
+correspondiente a niveles lógicos de **3.3 V**.
+
+La asignación entre las señales descritas en SystemVerilog y los pines físicos de la FPGA se realiza mediante el archivo de restricciones del proyecto (`.xdc`).
+
+Entre las principales conexiones físicas utilizadas se encuentran:
+
+- reloj principal de 100 MHz;
+- señales UART `RsRx` y `RsTx`;
+- pulsadores de selección, confirmación y reinicio;
+- señales del LCD;
+- displays de siete segmentos;
+- LEDs de estado;
+- salida correspondiente al buzzer.
+
+#### Conexión del LCD
+
+El PmodCLP utiliza una interfaz paralela de 8 bits. Las principales señales de control utilizadas por el diseño son:
+
+| Señal | Función |
+|---|---|
+| `lcd_data[7:0]` | Bus paralelo de datos/comandos |
+| `lcd_rs` | Selección entre comando y dato |
+| `lcd_rw` | Selección de lectura/escritura |
+| `lcd_e` | Señal de habilitación del LCD |
+
+En la implementación desarrollada, la comunicación con el LCD se utiliza principalmente para realizar operaciones de escritura, por lo que el periférico controla las señales necesarias para enviar comandos y caracteres respetando las temporizaciones correspondientes.
+
+#### Pulsadores
+
+Los pulsadores de la Basys 3 se utilizan como entradas digitales para realizar las funciones de:
+
+- selección del modo de dificultad;
+- confirmación de la selección;
+- reinicio general del sistema.
+
+Debido a que los pulsadores son dispositivos mecánicos, una única pulsación puede producir múltiples transiciones eléctricas durante un intervalo corto. Por esta razón, las señales asociadas a los botones deben acondicionarse antes de ser utilizadas por la lógica secuencial del sistema.
+
+El acondicionamiento permite obtener una señal estable que pueda ser interpretada correctamente por las máquinas de estados y registros del diseño.
+
+#### UART
+
+La comunicación UART utiliza dos señales independientes:
+
+```text
+RsRx → recepción hacia la FPGA
+RsTx → transmisión desde la FPGA
+```
+
+La comunicación es bidireccional, pero cada dirección posee su propia línea física. Al tratarse de UART, no se requiere una línea de reloj compartida entre la computadora y la FPGA; la sincronización se realiza mediante la configuración común de 115200 baudios y la estructura `START + DATA + STOP`.
+
+En conjunto, las restricciones eléctricas y de pines permiten relacionar la descripción RTL del sistema con los recursos físicos disponibles en la tarjeta FPGA y los periféricos externos conectados.
 
 ## 4. Fundamentación teórica
 
