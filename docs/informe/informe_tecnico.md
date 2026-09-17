@@ -28,60 +28,65 @@ Reglas de formato que deben respetarse en TODO el documento:
 
 ## Resumen
 
-<!-- [INTEGRANTE 1] Resumen ejecutivo del proyecto: qué se construyó, cómo se
-dividió el sistema (FPGA / PC), qué se logró demostrar, qué limitaciones
-quedaron y una síntesis de los resultados de síntesis/verificación. Máximo
-un párrafo o dos, escrito al final, cuando el resto del informe esté listo. -->
-
+Este informe presenta el diseño e implementación de un juego electrónico de Ahorcado en el cual una FPGA Basys 3 concentra la totalidad del control de la partida y una aplicación de computadora personal, desarrollada en Python, actúa como terminal remota del jugador mediante un enlace serial UART a 115200 baudios. El sistema, integrado en el módulo superior `hangman_top`, está compuesto por un módulo de control `game_core` que implementa la máquina de estados `MENU → GAME → RESULT → MENU`, selecciona la palabra secreta mediante un generador pseudoaleatorio LFSR de 8 bits y consulta un banco de 50 palabras (`word_bank`) descrito como una memoria de solo lectura combinacional; un bloque `uart_game_interface` que encapsula un núcleo `uart_peripheral` y define un protocolo de aplicación propio basado en tramas con encabezado `0xA5` para notificar el inicio de partida, el resultado de cada letra y el resultado final; y los periféricos de visualización y retroalimentación local: `lcd_screen_controller`/`lcd_peripheral` para el LCD PmodCLP (HD44780), e `io_controller` para los displays de siete segmentos, el LED de estado y el buzzer. Las simulaciones unitarias e integradas del sistema, así como los procesos de síntesis, implementación y análisis de timing, se completaron satisfactoriamente, y el sistema demostró jugabilidad completa sobre la tarjeta Basys 3: selección de dificultad, recepción y validación de letras, actualización del LCD y de los displays, control del tiempo y de los intentos, y comunicación bidireccional con la aplicación de PC. Como trabajo pendiente queda principalmente la optimización del diseño y la incorporación de patrones sonoros diferenciados en el buzzer para distinguir con mayor claridad entre acierto, error, victoria y derrota.
 ---
 
 ## 1. Introducción
 
 ### 1.1 Contexto
 
-<!-- [INTEGRANTE 1] Descripción del juego de Ahorcado, motivación del
-proyecto, diferencia respecto al Proyecto 1 (control local vs. control
-coordinado con una aplicación externa por UART). Mencionar la Basys 3 y los
-periféricos empleados (LCD PmodCLP, displays de 7 segmentos, LED, buzzer,
-botones). -->
+Ahorcado (*Hangman*) es un juego clásico de adivinanza de palabras en el que el jugador propone letras, una a la vez, intentando descubrir una palabra secreta antes de agotar un número máximo de intentos fallidos. Este segundo proyecto del curso integra diseño digital secuencial, arquitectura modular de periféricos y comunicación serial para construir una aplicación interactiva completa entre una FPGA y una computadora personal. A diferencia del Proyecto 1, donde el control del juego dependía únicamente de entradas locales (*push buttons*), en este proyecto la FPGA debe coordinar su lógica de control con una aplicación externa ejecutada en la PC, comunicándose con ella mediante un periférico UART y presentando el estado de la partida de forma local en un LCD PmodCLP (compatible HD44780) y en displays de siete segmentos.
+ 
+El proyecto se implementó sobre una tarjeta **Basys 3**, utilizando como periféricos de entrada los pulsadores `btnC`, `btnU` y `btnD`; como periféricos de salida un LCD de 16×2 (PmodCLP), cuatro displays de siete segmentos multiplexados, cuatro LED de estado y un buzzer; y como enlace de comunicación con la PC un puerto serie UART (`RsRx`/`RsTx`) a 115200 baudios.
 
 ### 1.2 Solución desarrollada
 
-<!-- [INTEGRANTE 1] Resumen de alto nivel de la arquitectura implementada:
-FPGA concentra la lógica del juego (banco de palabras, LFSR, validación de
-letras, tiempo, intentos); la PC actúa como terminal remota en Python vía
-UART. Referenciar el nombre real del top-level: `hangman_top_completo`. -->
+La solución desarrollada concentra toda la inteligencia y el control de la partida dentro de la FPGA, en el módulo superior `hangman_top`. Este módulo instancia y conecta los siguientes bloques:
+ 
+- `game_core`: máquina de estados y *datapath* principal del juego. Selecciona la palabra secreta mediante un generador pseudoaleatorio LFSR de 8 bits interno, consulta el banco de palabras (`word_bank`), valida cada letra recibida, controla el tiempo restante y los intentos fallidos, y determina el resultado de la partida.
+- `word_bank`: memoria de solo lectura combinacional con 50 palabras de longitud fija de 12 caracteres (rellenadas con espacios), junto con su longitud real, indexada de 0 a 49.
+- `uart_game_interface`: encapsula un núcleo `uart_peripheral` y expone hacia `game_core` una letra recibida (`letter`, `letter_valid`); además construye y transmite hacia la PC las tramas del protocolo de aplicación (inicio de partida, resultado de letra, resultado final) a partir del estado que le entrega `game_core`.
+- `lcd_screen_controller` y `lcd_peripheral`: el primero decide qué texto debe mostrarse en cada momento de la partida y el segundo controla físicamente el LCD PmodCLP a través de la interfaz de registros de 32 bits (`write_enable_i`, `addr_i`, `wdata_i`, `rdata_o`).
+- `io_controller`: multiplexa los displays de siete segmentos (tiempo restante y contador de victorias) y genera la retroalimentación sonora del buzzer.
+La PC ejecuta una aplicación en Python (`juego_uart.py`) que actúa únicamente como terminal remota: valida que la entrada del usuario sea una sola letra A–Z, la transmite por UART, y en un hilo independiente recibe e interpreta las tramas enviadas por la FPGA (identificadas por el byte de encabezado `0xA5`) para mostrar en consola el estado de la partida.
 
 ### 1.3 Alcance y limitaciones
 
-<!-- [INTEGRANTE 1 / INTEGRANTE 3] Qué se implementó completamente, qué
-quedó parcial o con limitaciones conocidas (ver también sección 12).
-Ejemplos a evaluar según el estado real del proyecto: UART sin FIFO, LFSR
-con semilla fija, tiempos de espera conservadores del LCD, buzzer activo
-en vez de pasivo. -->
-
+El alcance logrado corresponde a un juego de Ahorcado completamente funcional y jugable de principio a fin sobre la Basys 3: el sistema permite seleccionar el modo de dificultad, inicia una partida con una palabra tomada del banco correspondiente, recibe letras desde la aplicación de PC por UART, valida cada letra como correcta, incorrecta o repetida, actualiza en tiempo real el LCD y los displays de siete segmentos, controla el conteo de intentos fallidos y el tiempo restante, determina victoria o derrota, y regresa automáticamente a la pantalla de selección de modo al finalizar. A nivel de jugabilidad, el sistema cumple con lo solicitado en el enunciado.
+ 
+Dentro de las decisiones de diseño que se apartan del planteamiento inicial (`docs/diseño/diseño.md`) y que deben quedar documentadas como tales, en lugar de considerarse errores, están las siguientes:
+ 
+- **Selección de modo simplificada.** El planteamiento original proponía un botón `BTN_SEL` para alternar cíclicamente entre `FACIL` y `DIFICIL`, confirmado con un botón `BTN_OK` independiente. La implementación final simplifica esta interacción utilizando `btnU` para iniciar directamente en modo fácil y `btnD` para iniciar directamente en modo difícil, detectados por flanco de subida dentro de `game_core`. Esta simplificación reduce la cantidad de pasos que debe realizar el jugador sin afectar la funcionalidad exigida.
+- **Antirrebote de botones integrado en `game_core`.** En `hangman_top`, los pulsadores `btnC`, `btnU` y `btnD` se conectan directamente al módulo de control (como `rst`, `btn_easy` y `btn_hard`) sin pasar por un módulo dedicado de sincronización/antirrebote. Dentro de `game_core`, las señales `btn_easy_d`/`btn_hard_d` (un registro de un ciclo de retardo) se utilizan únicamente para detectar el flanco de subida de cada botón y generar un pulso de un solo ciclo; esto evita que una pulsación sostenida se interprete como múltiples eventos, pero no constituye un filtro antirrebote temporizado (de varios milisegundos) como el implementado en el Proyecto 1. En la práctica, el rebote mecánico no generó fallas perceptibles durante las pruebas, pero se documenta como una limitación de robustez del diseño.
+- **LFSR interno, no modular.** El generador pseudoaleatorio no se implementó como un módulo independiente, según sugería el diagrama de tercer nivel del planteamiento, sino como un registro de 8 bits interno a `game_core`, con semilla fija (`8'h1`) cargada en cada reset. Esto significa que, tras cada reset general, la secuencia de palabras generada es siempre la misma para una misma serie de pulsaciones, aunque durante una sesión de juego continua el valor del LFSR sigue evolucionando de forma pseudoaleatoria en cada ciclo en que el sistema permanece en `MENU`.
+- **Cobertura de longitudes del banco de palabras.** El banco de palabras cubre longitudes de 4 a 11 caracteres (no hasta 12), lo cual cumple igualmente el rango de 4 a 12 exigido por el enunciado, aunque no lo agota en su extremo superior.
+Como limitaciones y oportunidades de mejora identificadas al cierre del proyecto se señalan:
+ 
+- **Retroalimentación del LED de estado.** Los cuatro LED (`led[0]`–`led[3]`) indican correctamente en qué etapa se encuentra el sistema (menú, partida, resultado, dificultad), pero el esquema es mínimo y podría enriquecerse, por ejemplo, con patrones de parpadeo que refuercen visualmente el resultado de la partida.
+- **Banco de palabras fijo.** Las 50 palabras están fijas en tiempo de síntesis dentro de `word_bank`; ampliar o modificar el vocabulario requiere resintetizar el diseño. Se identifica como mejora futura el uso de una memoria inicializable o cargable en tiempo de ejecución.
+- **Optimización general del diseño.** Tanto en área/recursos como en la propia lógica de `game_core`, existe margen para optimizar el diseño (por ejemplo, separar con mayor claridad control y datapath, o modularizar el generador LFSR y el antirrebote de botones como bloques independientes, tal como se planteó originalmente).
+- **Retroalimentación sonora poco diferenciada.** El buzzer no distingue con patrones claramente diferentes entre acierto, error, victoria y derrota, lo que limita la información que el jugador recibe únicamente por audio.
+Estas limitaciones no impidieron demostrar el funcionamiento completo del juego y se retoman como mejoras futuras en la sección de conclusiones.
 ---
 
 ## 2. Objetivos
 
 ### 2.1 Objetivo general
 
-<!-- [INTEGRANTE 1] Objetivo general del proyecto (adaptar del enunciado). -->
+Diseñar e implementar un juego electrónico de Ahorcado en el cual una FPGA Basys 3 concentre la selección de la palabra secreta, la validación de letras, el control del tiempo y de los intentos, y la comunicación bidireccional con una aplicación de computadora personal desarrollada en Python, que actúa como terminal remota del jugador mediante un enlace serial UART.
 
 ### 2.2 Objetivos específicos
 
-<!-- [INTEGRANTE 1] Lista de objetivos específicos, alineados con los
-objetivos de diseño ya definidos en docs/diseño/diseño.md, por ejemplo: -->
-
-- Diseñar un banco de al menos 50 palabras almacenado en ROM sintetizable.
-- Implementar un generador pseudoaleatorio LFSR para seleccionar la palabra.
-- Diseñar la máquina de estados de control del juego (`game_core`).
-- Diseñar el periférico LCD (PmodCLP) con interfaz de 32 bits.
-- Diseñar el periférico UART y el protocolo de aplicación sobre UART.
-- Implementar la aplicación de PC en Python como terminal remota.
-- Verificar el sistema mediante testbenches autoverificables.
-- Realizar simulación post-implementación temporizada.
-- Comparar resultados teóricos, simulados y experimentales.
+- Diseñar un banco de al menos 50 palabras de longitud variable (4–12 caracteres), almacenado como memoria de solo lectura sintetizable dentro de la FPGA (`word_bank`).
+- Implementar un generador pseudoaleatorio tipo LFSR para seleccionar la palabra secreta según el modo de dificultad elegido.
+- Diseñar la máquina de estados y el *datapath* de control del juego (`game_core`), incluyendo la validación de letras correctas, incorrectas y repetidas, el conteo de intentos fallidos y el control del tiempo restante.
+- Diseñar el periférico LCD para el módulo PmodCLP (HD44780), con interfaz estándar de registros de 32 bits (`lcd_peripheral`), y la lógica que decide el contenido a mostrar en cada pantalla del juego (`lcd_screen_controller`).
+- Diseñar el periférico UART (`uart_peripheral`) y un protocolo de aplicación propio sobre UART (`uart_game_interface`) que notifique a la PC el inicio de partida, el resultado de cada letra y el resultado final.
+- Implementar la aplicación de PC en Python (`juego_uart.py`) como interfaz de entrada/salida remota del jugador, sin lógica de control del juego.
+- Implementar los indicadores locales de salida: displays de siete segmentos multiplexados (tiempo restante y contador de victorias), LED de estado y buzzer (`io_controller`).
+- Verificar el sistema mediante testbenches autoverificables, tanto a nivel de módulo como de integración.
+- Realizar simulación post-implementación temporizada del sistema completo.
+- Comparar los resultados teóricos, simulados y experimentales obtenidos.
 
 ---
 
@@ -89,25 +94,29 @@ objetivos de diseño ya definidos en docs/diseño/diseño.md, por ejemplo: -->
 
 ### 3.1 Requisitos funcionales
 
-<!-- [INTEGRANTE 1] Tabla comparando el requisito del enunciado contra la
-implementación final, igual que se hizo en el Proyecto 1. Ejemplo de
-filas a completar: -->
-
 | Requisito | Valor especificado | Implementación final |
 |---|---:|---|
-| Tamaño del banco de palabras | ≥ 50 palabras | |
-| Longitud de palabra | 4–12 caracteres | |
-| Alfabeto permitido | A–Z sin tildes ni Ñ | |
-| Intentos fallidos máximos | 6 | |
-| Tiempo modo fácil | sugerido 60 s | |
-| Tiempo modo difícil | sugerido 45 s | |
-| Longitud mínima modo difícil | > 5 letras (6+) | |
-| Baudios UART | 115200 | |
-| Reloj de la FPGA | 100 MHz | |
-| Displays de 7 segmentos | ≥ 4 dígitos | |
-| LED de estado | mínimo 1 LED, 3 estados distinguibles | |
-| Buzzer | 3 patrones distintos (acierto/error/fin) | |
-| Botón de reinicio general | `BTN_RST` | |
+| Tamaño del banco de palabras | ≥ 50 palabras | 50 palabras, `word_bank` (índices 0–49) |
+| Longitud de palabra | 4–12 caracteres | 4 a 11 caracteres según tabla `LENGTHS` de `word_bank` |
+| Alfabeto permitido | A–Z sin tildes ni Ñ | Palabras almacenadas en mayúsculas A–Z, rellenadas con espacios a 12 caracteres |
+| Selección de palabra | Pseudoaleatoria mediante LFSR | LFSR de 8 bits interno a `game_core`, semilla fija `8'h1` tras reset |
+| Rango de índices modo fácil | Cualquier palabra ≥ 4 letras | `easy_index = lfsr % 50` (todo el banco, índices 0–49) |
+| Rango de índices modo difícil | Solo palabras de 6+ letras | `hard_index = 20 + (lfsr % 30)` (índices 20–49, longitud 6–11) |
+| No repetición inmediata | — | Si el índice candidato coincide con `last_index`, se incrementa en 1 (con retorno cíclico dentro del rango del modo) |
+| Intentos fallidos máximos | 6 | Partida termina al alcanzar `wrong_count == 6` |
+| Tiempo modo fácil | sugerido 60 s | `EASY_TIME = 60` s (parámetro de `game_core`) |
+| Tiempo modo difícil | sugerido 45 s | `HARD_TIME = 45` s (parámetro de `game_core`) |
+| Tiempo de resultado final | ≥ 3 s | `RESULT_TIME = 3` s antes de regresar a `MENU` |
+| Letra repetida | Ignorar sin penalizar | Detectada mediante `used_letters`; no decrementa intentos ni reinicia tiempo |
+| Contador de victorias | 00–99 | Saturado con reinicio a 0 al superar 99 (`victories == 99 ? 0 : victories+1`) |
+| Baudios UART | 115200 | `BAUD_RATE = 115200` en `uart_peripheral`/`uart_game_interface` |
+| Reloj de la FPGA | 100 MHz | `CLK100MHZ`, único reloj de entrada del sistema |
+| Displays de 7 segmentos | ≥ 4 dígitos | 4 dígitos multiplexados en `io_controller` (`seg`, `an`, `dp`) — [verificar asignación exacta 2+2] |
+| LED de estado | mínimo 1 LED, estados distinguibles | 4 LED: `led[0]` menú, `led[1]` partida, `led[2]` resultado, `led[3]` modo difícil |
+| Buzzer | 3 patrones distintos | Generado en `io_controller` a partir de `letter_correct`, `letter_wrong`, `result_active`/`result_win` — [verificar patrones exactos] |
+| Botón de reinicio general | Botón central | `btnC`, conectado como `rst` a todos los módulos de `hangman_top` |
+| Selección de modo | Botones dedicados | `btnU` = fácil (`btn_easy`), `btnD` = difícil (`btn_hard`), detectados por flanco de subida dentro de `game_core` |
+| Comunicación requerida | UART asíncrono | Enlace bidireccional `RsRx`/`RsTx` mediante `uart_peripheral`, encapsulado por `uart_game_interface` |
 
 ### 3.2 Protocolo de aplicación sobre UART
 
