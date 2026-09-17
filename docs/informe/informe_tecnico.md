@@ -797,29 +797,44 @@ En conjunto, las restricciones eléctricas y de pines permiten relacionar la des
 
 ## 4. Fundamentación teórica
 
-<!-- Peso 20% de la rúbrica. Debe integrarse explícitamente con el trabajo
-realizado, no solo describir teoría en abstracto. -->
-
 ### 4.1 Lógica combinacional y secuencial
 
-<!-- [INTEGRANTE 1] Repaso breve aplicado a los registros y FSM del
-proyecto (`game_core`, contadores, registros de estado). -->
+La lógica combinacional describe salidas que dependen únicamente de los valores actuales de sus entradas, sin memoria del pasado; en `game_core` este tipo de lógica se utiliza, por ejemplo, en el cálculo de `match_mask` (posiciones de la palabra donde aparece la letra recibida), en `valid_mask` (máscara de bits válidos según la longitud de la palabra) y en la selección del índice candidato (`candidate_index`) según el modo y el último índice usado. Todos estos bloques se describen mediante `always_comb`, cuidando cubrir todos los caminos posibles para evitar la inferencia de *latches* no intencionados.
+ 
+La lógica secuencial, en cambio, almacena información entre flancos de reloj mediante flip-flops. En `game_core` esto se traduce en registros como `state` (estado de la FSM), `selected_word`, `word_length`, `revealed_mask`, `used_letters`, `wrong_count`, `time_left`, `victories`, `lfsr` y `last_index`, todos actualizados de forma síncrona en `always_ff @(posedge clk)` mediante asignaciones no bloqueantes (`<=`), de modo que reflejan el nuevo estado del sistema en el siguiente flanco de reloj.
 
 ### 4.2 Máquinas de estados finitos
 
-<!-- [INTEGRANTE 1] Concepto de FSM de Moore/Mealy aplicado a la FSM
-`MENU -> GAME -> RESULT -> MENU` de `game_core`. -->
+Una máquina de estados finitos (FSM) describe el comportamiento de un sistema secuencial como un conjunto finito de estados, con condiciones que determinan las transiciones entre ellos y salidas que pueden depender únicamente del estado actual (Moore) o también de las entradas presentes (Mealy). En `game_core` se implementa una FSM de tres estados, `typedef enum logic [1:0] {MENU, GAME, RESULT} state_t`, con las siguientes transiciones:
+ 
+- **`MENU → GAME`**: ocurre cuando se detecta un pulso en `btn_easy` o `btn_hard` (`easy_pulse`/`hard_pulse`); en la misma transición se carga la palabra seleccionada, se reinician los contadores de la partida (`revealed_mask`, `used_letters`, `wrong_count`) y se carga el tiempo correspondiente al modo (`EASY_TIME` o `HARD_TIME`).
+- **`GAME → RESULT`**: ocurre por tres condiciones mutuamente excluyentes: (a) todas las posiciones de la palabra quedan reveladas (`(revealed_mask | match_mask) == valid_mask`), lo que produce victoria y aumenta el contador de `victories`; (b) el conteo de letras incorrectas alcanza seis (`wrong_count == 5` antes de incrementar a 6), lo que produce derrota por intentos; o (c) el temporizador de la partida llega a cero (`time_left <= 1` al expirar el conteo de segundos), lo que produce derrota por tiempo.
+- **`RESULT → MENU`**: ocurre automáticamente transcurrido el tiempo de resultado configurado (`RESULT_TIME = 3` s), contado con la misma base de un segundo (`sec_count == CLK_FREQ-1`) que se usa durante la partida.
+Las señales combinacionales `menu_active`, `game_active` y `result_active` se derivan directamente del estado actual (`state == MENU`, etc.), por lo que corresponden a salidas de tipo Moore.
 
 ### 4.3 Registro de desplazamiento con retroalimentación lineal (LFSR)
 
-<!-- [INTEGRANTE 1] Teoría del LFSR, polinomio utilizado, por qué la
-semilla no puede ser cero, y cómo se mapea la salida del LFSR de 8 bits a
-un índice del banco de palabras. -->
+Un registro de desplazamiento con retroalimentación lineal (LFSR) genera una secuencia pseudoaleatoria desplazando sus bits en cada ciclo de reloj e insertando en el bit menos significativo el resultado de una función XOR aplicada sobre un subconjunto fijo de bits internos (los llamados *taps*). En `game_core` se implementó un LFSR de configuración Fibonacci de 8 bits:
+ 
+```systemverilog
+lfsr <= { lfsr[6:0], lfsr[7] ^ lfsr[5] ^ lfsr[4] ^ lfsr[3] };
+```
+ 
+Los *taps* utilizados (bits 7, 5, 4 y 3) corresponden al polinomio primitivo x⁸+x⁶+x⁵+x⁴+1, que produce una secuencia de longitud máxima de 255 estados (2⁸−1) para cualquier semilla distinta de cero. Precisamente por esto la semilla no puede ser `8'h0`: con esa semilla la retroalimentación XOR siempre produce cero y el registro queda permanentemente bloqueado en el estado absorbente `00000000`. En la implementación, el registro se inicializa con la semilla `8'h1` en cada reset, y avanza un paso en cada ciclo de reloj mientras el sistema permanece en el estado `MENU`, lo que en la práctica produce una posición diferente del LFSR en el instante exacto en que el jugador presiona `btnU` o `btnD`.
+ 
+El valor del LFSR se mapea a un índice del banco de palabras mediante una operación de módulo, distinta según el modo:
+ 
+- **Modo fácil**: `easy_index = lfsr % 50`, cubriendo la totalidad de las 50 palabras del banco.
+- **Modo difícil**: `hard_index = 20 + (lfsr % 30)`, restringiendo la selección al subrango de índices 20 a 49, que corresponden en `word_bank` a las palabras de 6 o más caracteres.
+Adicionalmente, si el índice candidato coincide con el índice de la última palabra utilizada (`last_index`), se incrementa en uno (con retorno cíclico dentro del rango del modo correspondiente), como estrategia simple para evitar repetir la misma palabra en dos partidas consecutivas.
 
 ### 4.4 Memorias de solo lectura (ROM) sintetizables
 
-<!-- [INTEGRANTE 1] Cómo se codifica el banco de 50 palabras de longitud
-variable en una ROM sintetizable en SystemVerilog. -->
+Una memoria de solo lectura (ROM) sintetizable puede describirse en SystemVerilog como un arreglo constante (`localparam`) indexado mediante una señal de entrada, resuelto en tiempo de síntesis mediante lógica combinacional o bloques de memoria de la FPGA, según el tamaño y las herramientas de síntesis. En este proyecto, `word_bank` implementa dos arreglos constantes paralelos e indexados de 0 a 49:
+ 
+- `WORDS[0:49]`, de tipo `logic [95:0]`, donde cada palabra se almacena como una cadena de 12 caracteres ASCII (96 bits), rellenando con espacios los caracteres sobrantes cuando la palabra es más corta que 12 letras. Esto permite representar palabras de longitud variable con un ancho de bus fijo, sin necesidad de codificar la longitud dentro de la misma palabra.
+- `LENGTHS[0:49]`, de tipo `logic [3:0]`, con la longitud real (sin el relleno de espacios) de cada palabra, usada por `game_core` para saber cuántas de las 12 posiciones son válidas (`valid_mask`) y para truncar la palabra al desplegarla.
+El acceso se resuelve con un bloque combinacional (`always_comb`) que verifica que el índice sea menor que 50 antes de leer el arreglo, devolviendo la primera palabra del banco como valor por defecto en caso de un índice fuera de rango, lo cual evita la inferencia de un *latch* al cubrir explícitamente todos los caminos de la asignación.
 
 ### 4.5 Protocolo UART asíncrono
 
