@@ -1313,12 +1313,17 @@ A diferencia del árbol propuesto en el planteamiento del diseño, no existe un 
 
 ### 6.2 Diagrama de bloques
 
-<!-- [INTEGRANTE 1] Insertar y referenciar el diagrama de primer/segundo
-nivel definido en docs/diseño/diseño.md. -->
+El diagrama de primer nivel presenta el sistema completo `hangman_top` como una única caja negra, mostrando únicamente sus entradas (reloj, botones, entrada UART) y salidas (salida UART, LCD, displays de siete segmentos, LED de estado, buzzer) hacia el exterior.
 
-![Diagrama general de bloques](Imagenes/diagrama_bloques.png)
+![Diagrama de primer nivel del sistema](fig/Primer_nivel.png)
 
-**Figura 1.** Diagrama de bloques del sistema completo `hangman_top`.
+**Figura 1.** Diagrama de primer nivel de `hangman_top`: interfaces externas del sistema completo.
+
+El diagrama de segundo nivel descompone ese bloque único en los subsistemas funcionales que efectivamente se implementaron: `game_core` (control y datapath del juego), `word_bank` (banco de palabras), `uart_game_interface` (comunicación con la PC), `lcd_screen_controller`/`lcd_peripheral` (control del LCD) e `io_controller` (displays, LED y buzzer), junto con sus interconexiones principales.
+
+![Diagrama de segundo nivel del sistema](fig/Segundo_Nivel.png)
+
+**Figura 2.** Diagrama de segundo nivel de `hangman_top`: subsistemas funcionales principales y sus interconexiones.
 
 ### 6.3 Flujo de una partida
 
@@ -1340,6 +1345,16 @@ modo → selección de palabra → recepción de letra → validación → repet
 8. Al finalizar la partida, el sistema permanece en `RESULT` durante `RESULT_TIME` (3 s) mostrando el resultado en el LCD y, si hubo victoria, incrementando el contador de `victories`; transcurrido ese tiempo, el sistema regresa automáticamente a `MENU`.
 
 ---
+### 6.4 Diagrama de tercer nivel
+
+El diagrama de tercer nivel muestra la descomposición interna de los bloques del segundo nivel, hasta el grado de detalle que sirvió de base para el diseño en SystemVerilog. Se incluye aquí como referencia general antes de describir cada módulo por separado en la sección 7.
+
+![Diagrama de tercer nivel del sistema](Imagenes/diagrama_bloques_nivel3.png)
+
+**Figura 3.** Diagrama de tercer nivel según el planteamiento del diseño (`docs/diseño/diseño.md`).
+
+Cabe aclarar que este diagrama corresponde al planteamiento original y no refleja al cien por ciento la implementación final: como se documentó en la sección 1.3, no existe un módulo `button_conditioner` independiente ni un LFSR modular separado, ya que ambas funciones quedaron integradas dentro de `game_core`. La correspondencia exacta entre este diagrama y los módulos realmente implementados se detalla módulo por módulo en la sección 7.
+
 
 ## 7. Subsistema FPGA
 
