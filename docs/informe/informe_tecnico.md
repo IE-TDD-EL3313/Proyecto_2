@@ -854,7 +854,9 @@ recepción UART. -->
 
 ### 4.8 Antirrebote de pulsadores (debouncing)
 
-<!-- [INTEGRANTE 1] Aplicado a `BTN_SEL`, `BTN_OK`, `BTN_RST`. -->
+El rebote mecánico ocurre porque, al presionar o soltar un pulsador físico, el contacto no cambia de estado de forma limpia, sino que oscila brevemente entre 0 y 1 durante algunos milisegundos antes de estabilizarse. Una técnica de antirrebote completa (como la usada en el Proyecto 1) muestrea la entrada periódicamente y solo acepta el nuevo valor cuando se ha mantenido estable durante una ventana de tiempo suficiente, generando además un pulso de un solo ciclo para cada pulsación válida.
+ 
+En este proyecto, `btnC`, `btnU` y `btnD` se conectan directamente desde `hangman_top` hacia `game_core` como `rst`, `btn_easy` y `btn_hard`, respectivamente, sin pasar por un módulo antirrebote dedicado. Dentro de `game_core`, únicamente se implementa **detección de flanco de subida**: los registros `btn_easy_d` y `btn_hard_d` retrasan la señal un ciclo de reloj, y las señales combinacionales `easy_pulse = btn_easy & ~btn_easy_d` y `hard_pulse = btn_hard & ~btn_hard_d` generan un pulso de un ciclo en la transición de 0 a 1. Esto evita que una pulsación sostenida sea interpretada como múltiples eventos consecutivos mientras el botón permanece presionado, pero **no filtra el rebote mecánico real** de los primeros milisegundos de la pulsación: si el rebote ocurriera dentro de esa ventana, en principio podría generar más de un pulso espurio. En la práctica, esto no se observó como una falla evidente durante las pruebas físicas, pero se documenta como una simplificación respecto al antirrebote temporizado del Proyecto 1 (ver sección 1.3).
 
 ### 4.9 Multiplexación de displays de siete segmentos
 
@@ -866,15 +868,12 @@ recepción UART. -->
 
 ### 5.1 Diseño modular
 
-<!-- [INTEGRANTE 1] Referencia explícita al planteamiento del diseño
-(docs/diseño/diseño.md): niveles de abstracción, separación control/datapath. -->
+El proyecto se desarrolló siguiendo la metodología de diseño modular planteada en `docs/diseño/diseño.md`, dividiendo el sistema en niveles de abstracción sucesivos: un primer nivel que define las entradas y salidas externas del sistema completo (`hangman_top`), un segundo nivel que separa los bloques funcionales principales (gestión de entradas, comunicación con la PC, gestión de palabras, control del juego, visualización y alertas), y niveles posteriores que detallan internamente cada bloque hasta llegar a unidades describibles directamente en SystemVerilog. Dentro del bloque de control se mantuvo, en la medida de lo posible, una separación conceptual entre la máquina de estados (FSM) y el *datapath* (registros de la partida), de forma que la FSM decide "cuándo" ocurre cada transición y el *datapath* administra "qué" datos se actualizan en cada una.
 
 ### 5.2 Flujo de desarrollo
 
-<!-- [INTEGRANTE 1] Orden de implementación seguido (igual al plan de
-implementación del diseño): habilitaciones temporales → botones → UART →
-LFSR/ROM → FSM → datapath → LCD → displays/LED/buzzer → Python →
-integración → simulación → implementación física. -->
+El desarrollo se realizó siguiendo, en términos generales, el orden planteado en el plan de implementación del diseño: primero los bloques de entrada (lectura de botones) y el núcleo de comunicación (`uart_peripheral`); luego el banco de palabras (`word_bank`) y el generador pseudoaleatorio LFSR; a continuación la máquina de estados y el *datapath* principal del juego (`game_core`); posteriormente el periférico y el controlador de pantallas del LCD (`lcd_peripheral`, `lcd_screen_controller`); después los indicadores locales (displays de siete segmentos, LED y buzzer) agrupados en `io_controller`; y finalmente la aplicación de PC en Python (`juego_uart.py`). Cada módulo se verificó de forma individual antes de integrarse en `hangman_top`, y la integración completa se validó tanto en simulación como en la tarjeta física.
+
 
 ### 5.3 Herramientas
 
@@ -887,19 +886,20 @@ integración → simulación → implementación física. -->
 
 ### 6.1 Jerarquía de módulos
 
-<!-- [INTEGRANTE 1] Reproducir/actualizar el árbol de módulos real: -->
-
+El árbol de módulos real, tomado directamente del código fuente (`hangman_top.sv`), es el siguiente:
+ 
 ```text
-hangman_top_completo
-  button_conditioner x2
+hangman_top
   game_core
     word_bank
   uart_game_interface
     uart_peripheral
-  lcd_screen_controller_completo
+  lcd_screen_controller
   lcd_peripheral
   io_controller
 ```
+ 
+A diferencia del árbol propuesto en el planteamiento del diseño, no existe un módulo `button_conditioner` independiente: los pulsadores `btnC`, `btnU` y `btnD` se conectan directamente desde `hangman_top` hacia `game_core`, que internamente realiza únicamente la detección de flanco descrita en la sección 4.8. De igual forma, `uart_peripheral` no es instanciado directamente por `hangman_top`, sino encapsulado dentro de `uart_game_interface`, que es el módulo que efectivamente se conecta al top-level.
 
 ### 6.2 Diagrama de bloques
 
@@ -915,6 +915,19 @@ nivel definido en docs/diseño/diseño.md. -->
 <!-- [INTEGRANTE 1] Diagrama de flujo o descripción textual: selección de
 modo → selección de palabra → recepción de letra → validación → repetición
 → fin de partida → regreso al menú. -->
+
+1. El sistema inicia (o retorna tras un reset) en el estado `MENU`, mientras el LFSR interno de `game_core` avanza continuamente en cada ciclo de reloj.
+2. El jugador presiona `btnU` (modo fácil) o `btnD` (modo difícil). Se detecta el flanco de subida correspondiente y se calcula el índice candidato de palabra (`easy_index` o `hard_index`), ajustado si coincide con la última palabra usada.
+3. `word_bank` entrega la palabra y su longitud real; `game_core` las almacena en `selected_word`/`word_length`, reinicia `revealed_mask`, `used_letters` y `wrong_count`, carga el tiempo correspondiente al modo (`EASY_TIME` o `HARD_TIME`) y transita a `GAME`.
+4. `lcd_screen_controller` actualiza el LCD para mostrar la palabra oculta y el número de intentos disponibles; `io_controller` inicia la cuenta regresiva en los displays de siete segmentos.
+5. La PC transmite una letra por UART; `uart_game_interface` la recibe, la valida como carácter A–Z y la entrega a `game_core` mediante `letter`/`letter_valid`.
+6. `game_core` compara la letra contra la palabra secreta:
+   - Si ya fue usada antes, se marca como **repetida** y se ignora sin penalización.
+   - Si coincide con una o más posiciones, se marca como **correcta**, se actualiza `revealed_mask` y, si la palabra queda completa, la partida pasa a **victoria**.
+   - Si no coincide, se marca como **incorrecta**, se incrementa `wrong_count` y, si se alcanza el sexto error, la partida pasa a **derrota por intentos**.
+   - Si el tiempo llega a cero antes de que ocurra cualquiera de los casos anteriores, la partida pasa a **derrota por tiempo**.
+7. `uart_game_interface` notifica a la PC el resultado de la letra procesada (y, si aplica, el resultado final de la partida) mediante las tramas del protocolo definido en la sección 3.2.
+8. Al finalizar la partida, el sistema permanece en `RESULT` durante `RESULT_TIME` (3 s) mostrando el resultado en el LCD y, si hubo victoria, incrementando el contador de `victories`; transcurrido ese tiempo, el sistema regresa automáticamente a `MENU`.
 
 ---
 
