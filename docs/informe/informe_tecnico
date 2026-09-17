@@ -111,34 +111,220 @@ filas a completar: -->
 
 ### 3.2 Protocolo de aplicación sobre UART
 
-<!-- [INTEGRANTE 2] Documentar el protocolo byte a byte definido por el
-equipo, con encabezado, tipos de mensaje y tablas de posición de cada byte.
-Usar el protocolo real implementado (ver DISTRIBUCION...txt): -->
+La comunicación entre la FPGA y la aplicación ejecutada en la computadora se realiza mediante una interfaz UART configurada a **115200 baudios, 8 bits de datos, sin bit de paridad y un bit de parada (8N1)**. Sobre esta comunicación física se implementó un protocolo de aplicación que permite enviar las letras ingresadas por el usuario hacia la FPGA y transmitir desde la FPGA la información correspondiente al estado y resultado de la partida.
+
+La comunicación es bidireccional. En la dirección **PC → FPGA**, se transmite directamente el carácter ASCII correspondiente a la letra seleccionada por el usuario. En la dirección **FPGA → PC**, se utilizan paquetes estructurados que comienzan con el byte de encabezado `0xA5`, seguido por un byte que identifica el tipo de mensaje y los campos correspondientes.
 
 #### Trama física UART
 
-<!-- START + 8 bits de datos LSB primero + STOP, 115200 baudios, 8N1. -->
+Cada byte se transmite utilizando el formato **8N1**, por lo que una trama UART está compuesta por un bit de inicio (`START`), ocho bits de datos y un bit de parada (`STOP`). Los bits de datos se transmiten comenzando por el bit menos significativo (**LSB first**).
+
+```text
+         START          8 bits de datos                STOP
+           │                    │                        │
+           ▼                    ▼                        ▼
+Reposo ─── 0 ─── D0 ─ D1 ─ D2 ─ D3 ─ D4 ─ D5 ─ D6 ─ D7 ─── 1 ─── Reposo
+                  └────────── LSB → MSB ──────────┘
+```
+
+Para una velocidad de transmisión de 115200 baudios, la duración aproximada de cada bit se obtiene mediante:
+
+$$
+T_{bit}=\frac{1}{115200}
+$$
+
+por lo tanto:
+
+$$
+T_{bit}\approx 8.68\,\mu s
+$$
+
+Como cada trama contiene diez bits en total —un bit de inicio, ocho bits de datos y un bit de parada—, el tiempo aproximado requerido para transmitir un byte es:
+
+$$
+T_{byte}=10(8.68\,\mu s)\approx86.8\,\mu s
+$$
+
+La FPGA utiliza un reloj principal de 100 MHz, correspondiente a un período de 10 ns. Por esta razón, el número aproximado de ciclos de reloj disponibles durante la transmisión de cada bit UART es:
+
+$$
+N_{ciclos/bit}=
+\frac{100\,000\,000}{115200}
+\approx868
+$$
+
+Este valor es utilizado por el periférico UART para establecer la temporización necesaria durante los procesos de transmisión y recepción.
 
 #### Mensajes PC → FPGA
 
-<!-- Un byte ASCII A–Z; cualquier otro byte se descarta sin afectar la
-partida. -->
+En la dirección **PC → FPGA**, la computadora transmite un único byte ASCII correspondiente a la letra introducida por el usuario. Los caracteres válidos se encuentran dentro del intervalo ASCII comprendido entre `A` y `Z`, es decir:
+
+$$
+'A'=0x41
+$$
+
+hasta:
+
+$$
+'Z'=0x5A
+$$
+
+Algunos ejemplos de los valores transmitidos se muestran en la siguiente tabla:
+
+| Entrada del usuario | Byte ASCII transmitido |
+|---|---|
+| `A` | `0x41` |
+| `B` | `0x42` |
+| `C` | `0x43` |
+| `Z` | `0x5A` |
+
+La aplicación de PC convierte la entrada del usuario a mayúscula antes de realizar la transmisión. Adicionalmente, la lógica implementada en la FPGA verifica que el byte recibido corresponda a una letra comprendida entre `A` y `Z`. Cualquier byte que se encuentre fuera de este intervalo se descarta sin modificar el estado de la partida.
+
+El proceso de recepción puede representarse de forma general de la siguiente manera:
+
+```text
+Usuario introduce una letra
+          │
+          ▼
+Aplicación de PC
+          │
+Conversión a mayúscula
+          │
+          ▼
+   Byte ASCII A-Z
+          │
+          ▼
+        UART
+          │
+          ▼
+         FPGA
+          │
+          ▼
+Validación del rango A-Z
+          │
+          ▼
+     Lógica del juego
+```
 
 #### Mensajes FPGA → PC
 
-<!-- Tabla con los tres tipos de paquete: inicio de partida, resultado de
-letra, resultado final. Incluir posición de cada byte, significado y
-longitud total. -->
+Para la comunicación en dirección **FPGA → PC** se definió un protocolo basado en paquetes de longitud conocida. Todos los paquetes comienzan con el byte `0xA5`, utilizado como encabezado o byte de sincronización.
+
+El segundo byte del paquete identifica el tipo de mensaje transmitido:
+
+| Tipo de mensaje | Código | Función |
+|---|---|---|
+| Inicio de partida | `0x01` | Informa el inicio de una nueva partida |
+| Resultado de letra | `0x02` | Informa el resultado de una letra procesada |
+| Resultado final | `0x03` | Informa la finalización de la partida |
+
+De esta manera, la aplicación de PC busca inicialmente el encabezado `0xA5` y posteriormente analiza el segundo byte para determinar la estructura y longitud del resto del paquete.
+
+##### Paquete de inicio de partida
+
+Cuando se inicia una nueva partida, la FPGA transmite el siguiente paquete:
+
+```text
+A5 01 MODO LONGITUD
+```
+
+La estructura byte a byte se muestra en la siguiente tabla:
 
 | Byte | Campo | Significado |
-|---|---|---|
-| 0 | `0xA5` | Encabezado |
-| 1 | Tipo | `0x01` inicio / `0x02` letra / `0x03` resultado final |
-| ... | ... | ... |
+|---:|---|---|
+| 0 | `0xA5` | Encabezado del protocolo |
+| 1 | `0x01` | Tipo de mensaje: inicio de partida |
+| 2 | `MODO` | Modo de dificultad seleccionado |
+| 3 | `LONGITUD` | Cantidad de caracteres de la palabra seleccionada |
 
-<!-- Completar con las tres tramas reales: inicio de partida, resultado de
-letra, resultado final, incluyendo códigos de letra correcta/incorrecta/
-repetida y códigos de causa de derrota (intentos vs. tiempo). -->
+**Longitud total del paquete: 4 bytes.**
+
+El campo `MODO` permite indicar a la aplicación de PC la dificultad seleccionada para la nueva partida, mientras que el campo `LONGITUD` contiene la cantidad de caracteres de la palabra seleccionada por la FPGA.
+
+##### Paquete de resultado de una letra
+
+Cada vez que una letra válida es procesada por la lógica del juego, la FPGA transmite un paquete con la siguiente estructura:
+
+```text
+A5 02 LETRA RESULTADO INTENTOS LONGITUD PATRON[12]
+```
+
+La distribución de los bytes es:
+
+| Byte | Campo | Significado |
+|---:|---|---|
+| 0 | `0xA5` | Encabezado del protocolo |
+| 1 | `0x02` | Tipo de mensaje: resultado de una letra |
+| 2 | `LETRA` | Código ASCII de la letra procesada |
+| 3 | `RESULTADO` | Resultado de la validación de la letra |
+| 4 | `INTENTOS` | Cantidad de intentos restantes |
+| 5 | `LONGITUD` | Longitud de la palabra seleccionada |
+| 6–17 | `PATRON[12]` | Estado actualizado de la palabra |
+
+**Longitud total del paquete: 18 bytes.**
+
+El campo `RESULTADO` utiliza los siguientes códigos:
+
+| Código | Significado |
+|---|---|
+| `0x01` | Letra correcta |
+| `0x02` | Letra incorrecta |
+| `0x03` | Letra repetida |
+
+El campo `PATRON[12]` contiene la representación actual de la palabra. Las posiciones que ya fueron descubiertas contienen las letras correspondientes, mientras que las posiciones todavía ocultas se representan mediante el carácter utilizado por la implementación para indicar una letra no revelada.
+
+Por ejemplo, para una palabra como `CASA`, después de procesar correctamente la letra `A`, el patrón representaría:
+
+```text
+Palabra:    C A S A
+Patrón:     _ A _ A
+```
+
+De esta manera, la aplicación de PC puede mostrar el progreso de la partida utilizando directamente la información proporcionada por la FPGA, sin implementar localmente la lógica de validación del juego.
+
+##### Paquete de resultado final
+
+Cuando la partida finaliza, la FPGA transmite el siguiente paquete:
+
+```text
+A5 03 GANO CAUSA LONGITUD PALABRA[12]
+```
+
+La distribución byte a byte es:
+
+| Byte | Campo | Significado |
+|---:|---|---|
+| 0 | `0xA5` | Encabezado del protocolo |
+| 1 | `0x03` | Tipo de mensaje: resultado final |
+| 2 | `GANO` | Indica el resultado de la partida |
+| 3 | `CAUSA` | Indica la causa de finalización |
+| 4 | `LONGITUD` | Longitud de la palabra |
+| 5–16 | `PALABRA[12]` | Palabra completa seleccionada |
+
+**Longitud total del paquete: 17 bytes.**
+
+El campo `CAUSA` permite identificar la condición que produjo la finalización de la partida:
+
+| Código | Significado |
+|---|---|
+| `0x01` | Victoria |
+| `0x02` | Derrota por agotar los seis intentos |
+| `0x03` | Derrota por agotamiento del tiempo |
+
+El campo `PALABRA[12]` contiene la palabra completa seleccionada para la partida. Esto permite que la aplicación de PC muestre la solución al finalizar el juego, tanto en caso de victoria como de derrota.
+
+#### Resumen del protocolo de aplicación
+
+La siguiente tabla resume los mensajes utilizados en la comunicación entre la computadora y la FPGA:
+
+| Dirección | Mensaje | Estructura | Longitud |
+|---|---|---|---:|
+| PC → FPGA | Letra | `LETRA` | 1 byte |
+| FPGA → PC | Inicio de partida | `A5 01 MODO LONGITUD` | 4 bytes |
+| FPGA → PC | Resultado de letra | `A5 02 LETRA RESULTADO INTENTOS LONGITUD PATRON[12]` | 18 bytes |
+| FPGA → PC | Resultado final | `A5 03 GANO CAUSA LONGITUD PALABRA[12]` | 17 bytes |
+
+La estructura propuesta mantiene toda la lógica de control de la partida dentro de la FPGA. La aplicación de PC se limita a transmitir las letras introducidas por el usuario e interpretar los paquetes enviados por la FPGA para presentar el estado de la partida.
 
 ### 3.3 Interfaz estándar de periféricos (bus de 32 bits)
 
