@@ -942,62 +942,118 @@ informe anterior. -->
 
 #### Entradas y salidas
 
-<!-- Tabla de puertos del top-level. -->
-
+| Señal | Dirección | Descripción |
+|---|---|---|
+| `CLK100MHZ` | Entrada | Reloj principal del sistema, 100 MHz. |
+| `btnC` | Entrada | Botón central; reinicio general (`rst`) de todos los módulos. |
+| `btnU` | Entrada | Botón superior; inicia una partida en modo fácil. |
+| `btnD` | Entrada | Botón inferior; inicia una partida en modo difícil. |
+| `RsRx` | Entrada | Entrada serial UART proveniente de la PC. |
+| `RsTx` | Salida | Salida serial UART hacia la PC. |
+| `lcd_rs`, `lcd_rw`, `lcd_e`, `lcd_data[7:0]` | Salidas | Interfaz paralela hacia el LCD PmodCLP (HD44780). |
+| `led[3:0]` | Salida | LED de estado del sistema. |
+| `seg[6:0]`, `an[3:0]`, `dp` | Salidas | Displays de siete segmentos multiplexados. |
+| `buzzer_out` | Salida | Señal de retroalimentación sonora. |
+ 
 #### Funcionamiento
-
-<!-- Interconexión de todos los módulos, señales `selected_mode`,
-`start_easy`, `start_hard`. -->
-
+ 
+`hangman_top` no contiene lógica propia más allá de la interconexión de módulos y de la asignación directa del LED de estado. Instancia `game_core`, `uart_game_interface`, `lcd_screen_controller`, `lcd_peripheral` e `io_controller`, conectando entre ellos las señales de estado del juego (`hard_mode`, `menu_active`, `game_active`, `result_active`, `result_win`), los datos de la partida (`selected_word`, `word_length`, `revealed_mask`, `wrong_count`, `time_left`, `victories`) y las señales de resultado de la última letra procesada (`letter_processed`, `letter_correct`, `letter_wrong`, `letter_repeated`). El reloj y el reset (`btnC`) se distribuyen sin modificación a todos los módulos internos, por lo que el sistema opera enteramente dentro de un único dominio de reloj de 100 MHz. Los cuatro LED de estado se asignan de forma combinacional: `led[0] = menu_active`, `led[1] = game_active`, `led[2] = result_active`, `led[3] = hard_mode`.
+ 
 #### Relación con el sistema
-
-<!-- Rol como integrador de todos los bloques. -->
+ 
+`hangman_top` actúa como el módulo integrador del proyecto: no implementa reglas del juego, sino que conecta el bloque de control (`game_core`), el bloque de comunicación (`uart_game_interface`) y los bloques de visualización/retroalimentación (`lcd_screen_controller`/`lcd_peripheral`, `io_controller`), constituyendo el punto único de entrada/salida física del sistema hacia la Basys 3.
 
 ### 7.2 `button_conditioner`
+Aunque no existe un módulo `button_conditioner` independiente en la
+implementación final; ver sección 1.3 y 4.8 para la justificación de esta
+desviación respecto al planteamiento original. Esta subsección documenta
+cómo se maneja realmente cada botón.
 
 #### Entradas y salidas
 
+| Señal | Dirección | Descripción |
+|---|---|---|
+| `btnC` | Entrada a `hangman_top` | Conectada directamente como `rst` a todos los módulos. |
+| `btnU`, `btnD` | Entrada a `hangman_top` | Conectadas directamente a `game_core` como `btn_easy` y `btn_hard`. |
+| `easy_pulse`, `hard_pulse` | Internas a `game_core` | Pulsos de un ciclo generados por detección de flanco de subida. |
+ 
 #### Funcionamiento
-
-<!-- Sincronización, antirrebote, generación de pulso único. -->
-
+ 
+`btnC` se utiliza como reset síncrono directo, sin condicionamiento adicional. `btnU` y `btnD` no pasan por un módulo de antirrebote dedicado; dentro de `game_core`, cada señal se retrasa un ciclo de reloj (`btn_easy_d`, `btn_hard_d`) y se compara contra su propio valor actual para generar un pulso de un solo ciclo en el flanco de subida (`easy_pulse = btn_easy & ~btn_easy_d`). Este pulso es el que efectivamente dispara la transición `MENU → GAME` dentro de la FSM de `game_core`.
+ 
 #### Relación con el sistema
+ 
+Estas señales son la única vía de interacción física directa del jugador con el sistema (además del LCD y los displays como salida), y determinan tanto el reinicio general del sistema como el inicio y la dificultad de cada partida.
 
 ### 7.3 `game_core`
 
 #### Entradas y salidas
-
+ 
+| Señal | Dirección | Descripción |
+|---|---|---|
+| `clk`, `rst` | Entradas | Reloj de 100 MHz y reset general síncrono. |
+| `btn_easy`, `btn_hard` | Entradas | Señales crudas de `btnU`/`btnD` (ver 7.2). |
+| `letter[7:0]`, `letter_valid` | Entradas | Letra ASCII recibida desde `uart_game_interface` y su bandera de validez. |
+| `hard_mode` | Salida | Indica si la partida activa/última es en modo difícil. |
+| `menu_active`, `game_active`, `result_active` | Salidas | Indican el estado actual de la FSM (`MENU`, `GAME`, `RESULT`). |
+| `result_win` | Salida | Indica si el resultado de la última partida fue victoria. |
+| `selected_word[95:0]`, `word_length[3:0]` | Salidas | Palabra secreta activa y su longitud real. |
+| `revealed_mask[11:0]` | Salida | Máscara de posiciones ya reveladas de la palabra. |
+| `wrong_count[2:0]` | Salida | Conteo de letras incorrectas (0 a 6). |
+| `time_left[6:0]`, `victories[6:0]` | Salidas | Tiempo restante en segundos y contador acumulado de victorias. |
+| `letter_processed`, `letter_correct`, `letter_wrong`, `letter_repeated` | Salidas | Banderas de un ciclo con el resultado de la última letra procesada. |
+ 
 #### Registros principales
-
-<!-- selected_word[95:0], word_length[3:0], revealed_mask[11:0],
-used_letters[25:0], wrong_count[2:0], time_left[6:0], victories[6:0]. -->
-
+ 
+Además de las salidas anteriores (registradas internamente), `game_core` mantiene los siguientes registros internos relevantes: `state` (estado de la FSM), `lfsr[7:0]` (generador pseudoaleatorio, sección 4.3), `last_index[5:0]` (índice de la última palabra usada, para evitar repetición inmediata), `used_letters[25:0]` (una bandera por cada letra del alfabeto A–Z ya intentada en la partida actual), `sec_count[31:0]` (contador de ciclos de reloj usado como base de tiempo de un segundo) y `result_secs[2:0]` (segundos transcurridos dentro del estado `RESULT`).
+ 
 #### Diagrama de estados
-
-<!-- MENU -> GAME -> RESULT -> MENU. Insertar figura y describir
-condiciones de transición: confirmación de modo, letra correcta/incorrecta/
-repetida, sexto error, tiempo agotado, palabra completa, timeout de
-resultado (3 s). -->
-
+ 
+<!-- [INTEGRANTE 1] Insertar aquí el diagrama de estados. -->
+ 
 ![Diagrama de estados de game_core](Imagenes/fsm_game_core.png)
-
-**Figura 2.** Diagrama de estados de `game_core`.
-
+ 
+**Figura 2.** Diagrama de estados de `game_core`: `MENU → GAME → RESULT → MENU`.
+ 
+Las transiciones de la FSM, y sus condiciones exactas tomadas del código, son:
+ 
+| Transición | Condición |
+|---|---|
+| `MENU → GAME` | `easy_pulse` o `hard_pulse` (flanco de subida de `btnU`/`btnD`) |
+| `GAME → RESULT` (victoria) | `(revealed_mask \| match_mask) == valid_mask` tras una letra correcta |
+| `GAME → RESULT` (derrota por intentos) | `wrong_count == 5` antes de incrementar a 6 (sexta letra incorrecta) |
+| `GAME → RESULT` (derrota por tiempo) | `time_left <= 1` al expirar el conteo de un segundo (`sec_count == CLK_FREQ-1`) |
+| `RESULT → MENU` | `result_secs == RESULT_TIME-1` tras el conteo de segundos en `RESULT` |
+ 
 #### Funcionamiento
-
+ 
+En el estado `MENU`, el LFSR avanza en cada ciclo de reloj y se calcula de forma combinacional el índice candidato de palabra (`candidate_index`), ajustado si coincide con `last_index`. Al detectarse `easy_pulse` o `hard_pulse`, se cargan `selected_word`, `word_length` y `last_index` desde `word_bank`, se reinician los contadores de la partida y se transita a `GAME` con el tiempo correspondiente al modo elegido.
+ 
+En el estado `GAME`, cada ciclo de reloj se evalúa primero si llegó una letra válida (`letter_valid` y `letter` dentro del rango A–Z). Si la letra ya fue usada (`used_letters[letter-"A"]`), se marca como repetida sin modificar contadores ni tiempo. Si no fue usada, se marca como usada y se compara contra `match_mask` (posiciones donde aparece en la palabra, calculado de forma combinacional): si coincide en alguna posición se marca como correcta y se actualiza `revealed_mask`, evaluando de inmediato si la palabra quedó completa; si no coincide se marca como incorrecta y se incrementa `wrong_count`. Si en ese mismo ciclo no llegó ninguna letra válida, se avanza en su lugar el temporizador de un segundo (`sec_count`), decrementando `time_left` o forzando derrota por tiempo si ya estaba en su valor mínimo.
+ 
+En el estado `RESULT`, el módulo simplemente cuenta `RESULT_TIME` segundos (usando la misma base de tiempo) antes de regresar a `MENU`; el valor de `result_win` y el estado de `wrong_count`/`time_left` en ese momento permiten a `lcd_screen_controller` y `uart_game_interface` reconstruir la causa del resultado final.
+ 
 #### Relación con el sistema
+ 
+`game_core` es el módulo central del proyecto: concentra toda la lógica de decisión del juego, y es la única fuente de verdad sobre el estado de la partida. Todos los demás módulos (`uart_game_interface`, `lcd_screen_controller`, `io_controller`) son consumidores de sus salidas; ninguno de ellos modifica el estado del juego, cumpliendo con el requisito del enunciado de que la FPGA concentre toda la inteligencia y el control de la partida.
 
 ### 7.4 `word_bank`
 
 #### Entradas y salidas
-
+ 
+| Señal | Dirección | Descripción |
+|---|---|---|
+| `index[5:0]` | Entrada | Índice de la palabra a leer (0–49; valores fuera de rango devuelven la palabra 0). |
+| `word[95:0]` | Salida | Palabra codificada en ASCII, longitud fija de 12 caracteres (rellena con espacios). |
+| `length[3:0]` | Salida | Longitud real de la palabra (sin contar el relleno). |
+ 
 #### Funcionamiento
-
-<!-- Banco de 50 palabras, selección por modo (fácil: cualquiera ≥4;
-difícil: solo ≥6), uso del LFSR de 8 bits, estrategia para evitar repetir
-la palabra inmediatamente anterior. -->
-
+ 
+`word_bank` es un módulo puramente combinacional que implementa una ROM de 50 palabras mediante dos arreglos constantes, `WORDS` y `LENGTHS` (ver sección 4.4). Los índices 0 a 19 corresponden a palabras de 4–5 caracteres, los índices 20 a 49 a palabras de 6 a 11 caracteres. Esta distribución no es arbitraria: es la que permite que `game_core` implemente la dificultad únicamente mediante el rango de índices consultado (`easy_index` sobre 0–49 completo, `hard_index` sobre 20–49), sin que `word_bank` necesite conocer el modo de juego. El propio índice ya incorpora, de forma indirecta, el resultado del LFSR de 8 bits y la lógica de no repetición inmediata descritos en la sección 4.3, ya que ambos se calculan en `game_core` antes de consultar este módulo.
+ 
 #### Relación con el sistema
+ 
+`word_bank` es utilizado exclusivamente por `game_core`, que lo instancia de forma combinacional (`u_word_bank`) para obtener, en cada ciclo, la palabra y longitud correspondientes al índice candidato actual. No mantiene estado propio ni participa en la lógica de la FSM; su única responsabilidad es la de banco de datos de solo lectura.
 
 ### 7.5 `uart_peripheral`
 
