@@ -1467,70 +1467,1294 @@ En el estado `RESULT`, el módulo simplemente cuenta `RESULT_TIME` segundos (usa
 
 ### 7.5 `uart_peripheral`
 
+El módulo `uart_peripheral` implementa la capa física de comunicación UART utilizada por el sistema. Su función consiste en convertir los datos paralelos de 8 bits utilizados internamente por la FPGA en una trama serial para transmisión y realizar el proceso inverso durante la recepción.
+
+El módulo se parametriza mediante la frecuencia de reloj del sistema (`CLK_FREQ`) y la velocidad de comunicación (`BAUD_RATE`). En la implementación se utiliza un reloj de **100 MHz** y una velocidad UART de **115200 baudios**.
+
 #### Entradas y salidas
+
+| Señal | Dirección | Ancho | Descripción |
+|---|---|---:|---|
+| `clk_i` | Entrada | 1 bit | Reloj principal de 100 MHz |
+| `rst_i` | Entrada | 1 bit | Reinicio síncrono del periférico |
+| `write_enable_i` | Entrada | 1 bit | Habilita la escritura de registros |
+| `addr_i` | Entrada | 2 bits | Selecciona el registro interno |
+| `wdata_i` | Entrada | 32 bits | Dato utilizado durante una escritura |
+| `rdata_o` | Salida | 32 bits | Dato correspondiente a una lectura |
+| `uart_rx_i` | Entrada | 1 bit | Línea serial de recepción UART |
+| `uart_tx_o` | Salida | 1 bit | Línea serial de transmisión UART |
 
 #### Mapa de registros
 
+El periférico utiliza tres direcciones:
+
+| Dirección | Registro | Función |
+|---|---|---|
+| `2'b00` | `DATA_TX` | Dato que será transmitido |
+| `2'b01` | `DATA_RX` | Último dato recibido |
+| `2'b10` | `CONTROL/STATUS` | Control y estado de UART |
+| `2'b11` | Reservado | Sin uso |
+
+Los registros `DATA_TX` y `DATA_RX` utilizan solamente los bits `[7:0]` de la interfaz de 32 bits.
+
+El registro `CONTROL/STATUS` utiliza los siguientes campos:
+
+| Bit | Lectura | Escritura | Función |
+|---:|---|---|---|
+| 0 | `tx_busy` | `1` inicia transmisión | Control y estado del transmisor |
+| 1 | `new_rx` | `0` limpia `new_rx` | Indicación de nuevo dato recibido |
+| `[31:2]` | `0` | Reservado | Sin uso |
+
 #### Funcionamiento
 
-<!-- RX/TX, registros de desplazamiento internos, generación de baud rate
-a 115200. -->
+##### Generación de la temporización UART
+
+La cantidad de ciclos del reloj principal correspondientes a un bit UART se calcula mediante:
+
+```systemverilog
+localparam int BIT_CLKS = CLK_FREQ / BAUD_RATE;
+```
+
+Para los valores utilizados:
+
+$$
+BIT\_CLKS=
+\frac{100\,000\,000}{115200}
+\approx868
+$$
+
+También se define:
+
+```systemverilog
+localparam int HALF_CLKS = BIT_CLKS / 2;
+```
+
+obteniéndose:
+
+$$
+HALF\_CLKS=434
+$$
+
+`BIT_CLKS` se utiliza para determinar la duración de cada bit transmitido o recibido, mientras que `HALF_CLKS` permite comprobar el bit de inicio aproximadamente en su punto medio.
+
+##### Sincronización de la entrada RX
+
+La entrada `uart_rx_i` proviene de un dominio asíncrono respecto al reloj interno de la FPGA. Antes de utilizarla en la máquina de estados del receptor se pasa por dos registros:
+
+```systemverilog
+rx_ff1  <= uart_rx_i;
+rx_sync <= rx_ff1;
+```
+
+Por lo tanto:
+
+```text
+uart_rx_i
+    │
+    ▼
+  rx_ff1
+    │
+    ▼
+  rx_sync
+    │
+    ▼
+Receptor UART
+```
+
+Esta estructura disminuye la probabilidad de que una condición metaestable se propague hacia la lógica interna.
+
+##### Transmisión TX
+
+Para transmitir un byte, este se escribe inicialmente en el registro `DATA_TX`.
+
+Posteriormente, una escritura de `1` sobre `CONTROL[0]` inicia la transmisión siempre que `tx_busy` se encuentre desactivado.
+
+La trama completa se almacena en el registro de desplazamiento de 10 bits:
+
+```systemverilog
+logic [9:0] tx_shift;
+```
+
+El contenido inicial se construye mediante:
+
+```systemverilog
+tx_shift <= {1'b1, tx_data, 1'b0};
+```
+
+por lo que contiene:
+
+```text
+bit 9                         bit 0
+  │                             │
+  ▼                             ▼
+ STOP    DATA[7:0]            START
+  1     D7 ... D1 D0            0
+```
+
+La salida UART se obtiene del bit menos significativo:
+
+```systemverilog
+assign uart_tx_o = tx_busy ? tx_shift[0] : 1'b1;
+```
+
+Cuando no existe una transmisión, la línea permanece en nivel lógico alto, correspondiente al estado de reposo UART.
+
+Cada `BIT_CLKS` ciclos, el registro se desplaza:
+
+```systemverilog
+tx_shift <= {1'b1, tx_shift[9:1]};
+```
+
+De esta forma se transmite secuencialmente:
+
+```text
+START → D0 → D1 → D2 → D3 → D4 → D5 → D6 → D7 → STOP
+```
+
+El contador `tx_bit` determina cuál de los diez bits está siendo transmitido, mientras que `tx_count` controla la duración temporal de cada bit.
+
+Al finalizar el bit número 9, `tx_busy` regresa a cero.
+
+##### Recepción RX
+
+La recepción utiliza una máquina de estados con cuatro estados:
+
+```text
+RX_IDLE → RX_START → RX_DATA → RX_STOP
+    ▲                              │
+    └──────────────────────────────┘
+```
+
+En `RX_IDLE`, el receptor espera detectar un nivel bajo en `rx_sync`, lo cual puede representar el comienzo de un bit START.
+
+En `RX_START`, se esperan `HALF_CLKS` ciclos y se vuelve a comprobar la señal. Si continúa en nivel bajo, el bit START se considera válido.
+
+En `RX_DATA`, los ocho bits se muestrean en intervalos de `BIT_CLKS` ciclos y se almacenan en:
+
+```systemverilog
+logic [7:0] rx_shift;
+```
+
+mediante:
+
+```systemverilog
+rx_shift[rx_bit] <= rx_sync;
+```
+
+Finalmente, en `RX_STOP` se verifica que el bit de parada se encuentre en nivel alto. Si es correcto:
+
+```systemverilog
+rx_data <= rx_shift;
+new_rx  <= 1'b1;
+```
+
+El byte queda disponible en `DATA_RX` y `new_rx` informa al controlador que existe un nuevo dato pendiente.
 
 #### Relación con el sistema
+
+`uart_peripheral` no interpreta el significado de los bytes transmitidos o recibidos. Su responsabilidad se limita a implementar la comunicación UART de bajo nivel.
+
+La relación con el sistema es:
+
+```text
+             uart_game_interface
+                     │
+              Bus de 32 bits
+                     │
+                     ▼
+              uart_peripheral
+                │         │
+               TX         RX
+                │         │
+                └────┬────┘
+                     │
+                     ▼
+                    PC
+```
+
+De esta forma, `uart_peripheral` se encarga de **cómo se transmite un byte**, mientras que `uart_game_interface` determina **qué bytes deben transmitirse y qué significado tienen**.
+
+---
 
 ### 7.6 `uart_game_interface`
 
+El módulo `uart_game_interface` implementa la capa de comunicación entre la lógica principal del juego y el periférico UART. Su función es recibir los caracteres enviados desde la aplicación de PC y convertir los diferentes eventos generados por el juego en paquetes estructurados que posteriormente son transmitidos mediante `uart_peripheral`.
+
+A diferencia de `uart_peripheral`, que se encarga únicamente de la transmisión y recepción física de los bits UART, `uart_game_interface` conoce el protocolo de aplicación definido para el juego.
+
 #### Entradas y salidas
+
+El módulo posee los siguientes parámetros:
+
+| Parámetro | Valor por defecto | Función |
+|---|---:|---|
+| `CLK_FREQ` | `100_000_000` | Frecuencia del reloj principal |
+| `BAUD_RATE` | `115200` | Velocidad de comunicación UART |
+
+Las entradas y salidas principales son:
+
+| Señal | Dirección | Ancho | Función |
+|---|---|---:|---|
+| `clk` | Entrada | 1 bit | Reloj principal |
+| `rst` | Entrada | 1 bit | Reinicio del módulo |
+| `uart_rx_i` | Entrada | 1 bit | Línea serial recibida desde la PC |
+| `uart_tx_o` | Salida | 1 bit | Línea serial transmitida hacia la PC |
+| `letter` | Salida | 8 bits | Letra ASCII recibida y validada |
+| `letter_valid` | Salida | 1 bit | Pulso que indica una nueva letra válida |
+| `hard_mode` | Entrada | 1 bit | Modo de dificultad actual |
+| `game_active` | Entrada | 1 bit | Indica que existe una partida activa |
+| `result_active` | Entrada | 1 bit | Indica que el juego se encuentra mostrando el resultado |
+| `result_win` | Entrada | 1 bit | Indica si el resultado corresponde a una victoria |
+| `selected_word` | Entrada | 96 bits | Palabra seleccionada, con capacidad para 12 caracteres |
+| `word_length` | Entrada | 4 bits | Longitud de la palabra |
+| `revealed_mask` | Entrada | 12 bits | Indica las posiciones reveladas |
+| `wrong_count` | Entrada | 3 bits | Cantidad de errores acumulados |
+| `letter_processed` | Entrada | 1 bit | Indica que una letra fue procesada |
+| `letter_correct` | Entrada | 1 bit | Indica que la letra fue correcta |
+| `letter_wrong` | Entrada | 1 bit | Indica que la letra fue incorrecta |
+| `letter_repeated` | Entrada | 1 bit | Indica que la letra estaba repetida |
+
+Internamente, el módulo instancia `uart_peripheral` y se comunica con este mediante el bus:
+
+```text
+we
+addr[1:0]
+wdata[31:0]
+rdata[31:0]
+```
+
+La conexión general es:
+
+```text
+game_core
+    │
+    │ estado y eventos
+    ▼
+uart_game_interface
+    │
+    │ bus de registros
+    ▼
+uart_peripheral
+    │
+    │ RX / TX
+    ▼
+    PC
+```
 
 #### Diagrama de estados
 
-<!-- IDLE, RX_READ, RX_CLEAR, TX_LOAD, TX_START, TX_WAIT. -->
+La máquina de estados utilizada por `uart_game_interface` contiene seis estados:
+
+```text
+                         ┌──────────┐
+                         │   IDLE   │
+                         └────┬─────┘
+                              │
+             ┌────────────────┴────────────────┐
+             │                                 │
+        nuevo byte                       paquete pendiente
+             │                                 │
+             ▼                                 ▼
+       ┌───────────┐                      ┌─────────┐
+       │  RX_READ  │                      │ TX_LOAD │◄───────┐
+       └─────┬─────┘                      └────┬────┘        │
+             │                                 │             │
+             ▼                                 ▼             │
+       ┌───────────┐                     ┌──────────┐        │
+       │ RX_CLEAR  │                     │ TX_START │        │
+       └─────┬─────┘                     └────┬─────┘        │
+             │                                 │             │
+             ▼                                 ▼             │
+           IDLE                          ┌─────────┐          │
+                                         │ TX_WAIT │──────────┘
+                                         └────┬────┘
+                                              │
+                                       último byte
+                                              │
+                                              ▼
+                                            IDLE
+```
+
+La función de cada estado es:
+
+| Estado | Función |
+|---|---|
+| `IDLE` | Espera eventos pendientes o un nuevo byte recibido |
+| `RX_READ` | Lee `DATA_RX` desde `uart_peripheral` |
+| `RX_CLEAR` | Limpia `new_rx` y entrega la letra si pertenece a `A-Z` |
+| `TX_LOAD` | Escribe el siguiente byte del paquete en `DATA_TX` |
+| `TX_START` | Solicita el inicio de la transmisión |
+| `TX_WAIT` | Espera hasta que `tx_busy` indique que el byte terminó de transmitirse |
 
 #### Funcionamiento
 
-<!-- Eventos pendientes: pending_start, pending_letter, pending_end. -->
+##### Recepción de caracteres
+
+Mientras la FSM se encuentra en `IDLE`, se consulta el bit `new_rx` mediante:
+
+```systemverilog
+else if (rdata[1])
+    state <= RX_READ;
+```
+
+En `RX_READ`, el byte almacenado en `DATA_RX` se captura en el registro interno `rx_byte`:
+
+```systemverilog
+rx_byte <= rdata[7:0];
+```
+
+Posteriormente, la FSM pasa a `RX_CLEAR`. En este estado se realiza la validación:
+
+```systemverilog
+if (rx_byte >= "A" && rx_byte <= "Z")
+```
+
+Únicamente los caracteres ASCII comprendidos entre `A` y `Z` son entregados a la lógica del juego:
+
+```systemverilog
+letter       <= rx_byte;
+letter_valid <= 1;
+```
+
+Por lo tanto, un carácter inválido se descarta y no genera `letter_valid`.
+
+El proceso completo es:
+
+```text
+new_rx = 1
+    │
+    ▼
+ RX_READ
+    │
+    ▼
+Capturar DATA_RX
+    │
+    ▼
+ RX_CLEAR
+    │
+    ▼
+¿Está entre A y Z?
+   /          \
+ Sí            No
+ │              │
+ ▼              ▼
+letter       descartar
+letter_valid=1
+```
+
+##### Eventos pendientes
+
+El módulo utiliza tres registros para almacenar solicitudes de transmisión:
+
+| Registro | Evento almacenado |
+|---|---|
+| `pending_start` | Inicio de una partida |
+| `pending_letter` | Resultado de una letra |
+| `pending_end` | Finalización de la partida |
+
+Para detectar el inicio de una partida se utiliza:
+
+```systemverilog
+if (game_active && !game_d)
+```
+
+donde `game_d` contiene el valor anterior de `game_active`. Esto permite detectar el flanco de activación.
+
+De manera equivalente, el inicio del estado de resultado se detecta mediante:
+
+```systemverilog
+if (result_active && !result_d)
+```
+
+Cuando `letter_processed` se activa, se almacena un evento de resultado de letra.
+
+Los indicadores `pending_*` permiten conservar el evento hasta que la FSM pueda construir y transmitir el paquete correspondiente.
+
+En `IDLE` se utiliza la siguiente prioridad:
+
+```text
+pending_start
+     │
+     ▼
+pending_letter
+     │
+     ▼
+pending_end
+     │
+     ▼
+recepción UART
+```
+
+##### Snapshots
+
+Cuando ocurre un evento, los datos necesarios para transmitirlo se almacenan en registros internos.
+
+Para una letra procesada se almacenan, entre otros:
+
+```text
+letter_snap
+letter_result
+attempts_snap
+length_snap
+revealed_snap
+word_snap
+```
+
+Esto permite conservar una copia estable de la información asociada al evento.
+
+El resultado de una letra se codifica como:
+
+```text
+0x01 → correcta
+0x02 → incorrecta
+0x03 → repetida
+```
+
+Los intentos restantes se calculan mediante:
+
+```systemverilog
+attempts_snap <= (wrong_count >= 6)
+               ? 0
+               : 6 - wrong_count;
+```
+
+Para el resultado final se almacenan:
+
+```text
+end_win
+end_cause
+end_length
+end_word
+```
+
+La causa se codifica como:
+
+```text
+0x01 → victoria
+0x02 → derrota por seis errores
+0x03 → derrota por tiempo
+```
+
+##### Construcción de paquetes
+
+El módulo posee un buffer:
+
+```systemverilog
+logic [7:0] tx_buffer [0:17];
+```
+
+con capacidad para 18 bytes, correspondiente al paquete de mayor longitud.
+
+Los tres paquetes construidos son:
+
+```text
+Inicio:
+A5 01 MODO LONGITUD
+```
+
+```text
+Resultado de letra:
+A5 02 LETRA RESULTADO INTENTOS LONGITUD PATRON[12]
+```
+
+```text
+Resultado final:
+A5 03 RESULTADO CAUSA LONGITUD PALABRA[12]
+```
+
+Para el paquete de resultado de letra, las posiciones todavía ocultas se transmiten explícitamente mediante el carácter ASCII `_`, mientras que las posiciones posteriores al final de la palabra se rellenan con espacios.
+
+El proceso de transmisión de cada byte es:
+
+```text
+TX_LOAD
+   │
+   │ escribir tx_buffer[tx_index]
+   │ en DATA_TX
+   ▼
+TX_START
+   │
+   │ CONTROL[0] = 1
+   ▼
+TX_WAIT
+   │
+   │ esperar tx_busy = 0
+   ▼
+¿Último byte?
+   /       \
+ No         Sí
+ │           │
+ ▼           ▼
+tx_index++  IDLE
+ │
+ └──────► TX_LOAD
+```
 
 #### Relación con el sistema
+
+`uart_game_interface` desacopla el protocolo del juego de la implementación física de UART.
+
+```text
+                     game_core
+                        ▲ │
+                 letter │ │ eventos
+                        │ ▼
+               uart_game_interface
+                        │
+                 bus de 32 bits
+                        │
+                        ▼
+                 uart_peripheral
+                    │       │
+                   RX       TX
+                    │       │
+                    └── PC ─┘
+```
+
+Gracias a esta separación, `game_core` trabaja con eventos y letras completas, mientras que los detalles de temporización, bits START/STOP y desplazamiento serial permanecen dentro de `uart_peripheral`.
+
+---
 
 ### 7.7 `lcd_peripheral`
 
+El módulo `lcd_peripheral` implementa la interfaz de bajo nivel utilizada para controlar físicamente el LCD. Su función es recibir comandos o datos mediante la interfaz interna de registros y generar las señales `RS`, `RW`, `E` y `DATA[7:0]` respetando los tiempos establecidos por el diseño.
+
+El módulo también realiza automáticamente la secuencia de inicialización requerida después del reinicio.
+
 #### Entradas y salidas
+
+| Señal | Dirección | Ancho | Función |
+|---|---|---:|---|
+| `clk_i` | Entrada | 1 bit | Reloj principal |
+| `rst_i` | Entrada | 1 bit | Reinicio del periférico |
+| `write_enable_i` | Entrada | 1 bit | Habilita una escritura |
+| `addr_i` | Entrada | 2 bits | Dirección del registro |
+| `wdata_i` | Entrada | 32 bits | Dato de escritura |
+| `rdata_o` | Salida | 32 bits | Dato de lectura/estado |
+| `lcd_rs` | Salida | 1 bit | Selección comando/dato |
+| `lcd_rw` | Salida | 1 bit | Selección lectura/escritura |
+| `lcd_e` | Salida | 1 bit | Señal Enable |
+| `lcd_data` | Salida | 8 bits | Bus paralelo hacia el LCD |
+
+El LCD se utiliza únicamente en modo escritura:
+
+```systemverilog
+assign lcd_rw = 1'b0;
+```
+
+Por lo tanto, `RW` permanece permanentemente en nivel bajo.
 
 #### Mapa de registros
 
+El periférico utiliza:
+
+| Dirección | Registro | Función |
+|---|---|---|
+| `2'b00` | `CONTROL/STATUS` | Control y estado |
+| `2'b01` | `DATA` | Byte que será enviado al LCD |
+| `2'b10` | Reservado | Sin uso |
+| `2'b11` | Reservado | Sin uso |
+
+El registro `DATA` utiliza:
+
+| Bits | Función |
+|---|---|
+| `[7:0]` | `data_reg` |
+| `[31:8]` | Reservados |
+
+El registro `CONTROL/STATUS` utiliza:
+
+| Bit | Escritura | Lectura |
+|---:|---|---|
+| 0 | `start` | — |
+| 1 | `rs` | — |
+| 2 | `clear` | — |
+| 3 | `home` | — |
+| 8 | — | `busy` |
+| 9 | — | `done` |
+
+`busy` indica que el periférico todavía está ejecutando una operación, mientras que `done` se activa durante un ciclo al terminar una operación normal.
+
 #### Diagrama de estados
 
-<!-- POWER, IDLE, SETUP, ENABLE, WAIT. -->
+La FSM del periférico contiene cinco estados:
+
+```text
+             RESET
+               │
+               ▼
+          ┌─────────┐
+          │  POWER  │
+          └────┬────┘
+               │
+               │ inicialización
+               ▼
+          ┌─────────┐
+     ┌───►│  SETUP  │
+     │    └────┬────┘
+     │         ▼
+     │    ┌─────────┐
+     │    │ ENABLE  │
+     │    └────┬────┘
+     │         ▼
+     │    ┌─────────┐
+     │    │  WAIT   │
+     │    └────┬────┘
+     │         │
+     │    ┌────┴────────────┐
+     │    │                 │
+     │ inicialización   operación terminada
+     │    │                 │
+     └────┘                 ▼
+                       ┌─────────┐
+                  ┌───►│  IDLE   │
+                  │    └────┬────┘
+                  │         │ solicitud
+                  │         ▼
+                  │       SETUP
+                  │         │
+                  └─────────┘
+```
+
+Los estados tienen las siguientes funciones:
+
+| Estado | Función |
+|---|---|
+| `POWER` | Espera 40 ms después del reinicio |
+| `IDLE` | Espera una solicitud del controlador |
+| `SETUP` | Mantiene estables datos y control antes de `E` |
+| `ENABLE` | Mantiene activa la señal `lcd_e` |
+| `WAIT` | Espera el tiempo de ejecución del comando |
 
 #### Funcionamiento
 
+##### Temporización
+
+El módulo obtiene una referencia de microsegundos mediante:
+
+```systemverilog
+localparam int US = CLK_FREQ / 1_000_000;
+```
+
+Con un reloj de 100 MHz:
+
+$$
+US=\frac{100\,000\,000}{1\,000\,000}=100
+$$
+
+Por lo tanto, **1 µs equivale a 100 ciclos del reloj**.
+
+Los tiempos configurados son:
+
+| Parámetro | Tiempo |
+|---|---:|
+| `POWER_US` | 40 ms |
+| `SETUP_US` | 1 µs |
+| `E_US` | 1 µs |
+| `NORMAL_US` | 50 µs |
+| `CLEAR_US` | 2 ms |
+
+##### Inicialización
+
+Después del reset:
+
+```systemverilog
+state <= POWER;
+busy  <= 1;
+ready <= 0;
+```
+
+El periférico espera inicialmente **40 ms**.
+
+Posteriormente ejecuta automáticamente cuatro comandos:
+
+```text
+0x38 → 0x0C → 0x01 → 0x06
+```
+
+Estos se generan mediante la función:
+
+```systemverilog
+init_cmd()
+```
+
+La secuencia implementada es:
+
+| Índice | Comando | Función |
+|---:|---|---|
+| 0 | `0x38` | Interfaz de 8 bits y dos líneas |
+| 1 | `0x0C` | Display encendido |
+| 2 | `0x01` | Limpiar pantalla |
+| 3 | `0x06` | Incremento automático del cursor |
+
+Después de completar el cuarto comando:
+
+```systemverilog
+ready <= 1;
+busy  <= 0;
+state <= IDLE;
+```
+
+##### Operación normal
+
+En `IDLE`, una escritura en `DATA` almacena:
+
+```systemverilog
+data_reg <= wdata_i[7:0];
+```
+
+Posteriormente, una escritura en `CONTROL` puede solicitar tres tipos de operación.
+
+**CLEAR**
+
+```text
+CONTROL[2] = 1
+```
+
+envía `0x01` y utiliza una espera de 2 ms.
+
+**HOME**
+
+```text
+CONTROL[3] = 1
+```
+
+envía `0x02` y utiliza una espera de 2 ms.
+
+**START**
+
+```text
+CONTROL[0] = 1
+```
+
+envía el contenido previamente almacenado en `data_reg`.
+
+El bit:
+
+```text
+CONTROL[1]
+```
+
+determina el valor de `RS`:
+
+```text
+0 → comando
+1 → carácter/dato
+```
+
+Después de aceptar una operación:
+
+```text
+IDLE
+ │
+ ▼
+SETUP
+ │ 1 µs
+ ▼
+ENABLE
+ │ 1 µs
+ ▼
+WAIT
+ │ 50 µs o 2 ms
+ ▼
+IDLE
+```
+
+Al finalizar una operación normal:
+
+```systemverilog
+busy <= 0;
+done <= 1;
+```
+
 #### Relación con el sistema
 
-### 7.8 `lcd_screen_controller_completo`
+`lcd_peripheral` no construye los mensajes que aparecen en pantalla. Recibe bytes y comandos desde `lcd_screen_controller`.
+
+```text
+game_core
+    │
+    ▼
+lcd_screen_controller
+    │
+    │ DATA / CONTROL
+    ▼
+lcd_peripheral
+    │
+    │ RS, RW, E, DATA[7:0]
+    ▼
+LCD 16x2
+```
+
+Esta separación permite mantener independientes la lógica de presentación y la temporización física del LCD.
+
+---
+
+### 7.8 `lcd_screen_controller`
+
+El módulo `lcd_screen_controller` determina el contenido textual que debe aparecer en las dos líneas del LCD según el estado actual del juego. También coordina las escrituras hacia `lcd_peripheral`.
+
+Cada línea se representa mediante un vector de **128 bits**, equivalente a:
+
+$$
+16\ caracteres\times8\ bits=128\ bits
+$$
 
 #### Entradas y salidas
 
+| Señal | Dirección | Ancho | Función |
+|---|---|---:|---|
+| `clk` | Entrada | 1 bit | Reloj principal |
+| `rst` | Entrada | 1 bit | Reinicio |
+| `game_active` | Entrada | 1 bit | Indica una partida activa |
+| `result_active` | Entrada | 1 bit | Indica el estado de resultado |
+| `result_win` | Entrada | 1 bit | Diferencia victoria y derrota |
+| `selected_word` | Entrada | 96 bits | Palabra seleccionada |
+| `word_length` | Entrada | 4 bits | Longitud de la palabra |
+| `revealed_mask` | Entrada | 12 bits | Posiciones reveladas |
+| `time_left` | Entrada | 7 bits | Tiempo restante |
+| `wrong_count` | Entrada | 3 bits | Número de errores |
+| `write_enable_o` | Salida | 1 bit | Habilitación de escritura al periférico |
+| `addr_o` | Salida | 2 bits | Dirección del registro LCD |
+| `wdata_o` | Salida | 32 bits | Información enviada al periférico |
+| `rdata_i` | Entrada | 32 bits | Estado leído desde el periférico |
+
 #### Funcionamiento
 
-<!-- Pantallas: selección fácil/difícil, partida activa, victoria,
-derrota+palabra completa. Uso de snapshots para evitar cambios de
-contenido durante una actualización. -->
+##### Construcción de las pantallas
+
+Cuando no existe una partida ni un resultado activo, las líneas se construyen como:
+
+```text
+Línea 1: MODO FACIL
+Línea 2: MODO DIFICIL
+```
+
+Durante una partida activa, la primera línea comienza con:
+
+```text
+P:
+```
+
+y posteriormente se muestra el patrón actual de la palabra.
+
+Para cada posición:
+
+```systemverilog
+revealed_mask[i]
+```
+
+determina si se muestra la letra real o `_`.
+
+Conceptualmente:
+
+```text
+selected_word = CASA
+revealed_mask = 0101
+
+LCD:
+P:_A_A
+```
+
+La segunda línea utiliza el formato:
+
+```text
+T:00 Y INT:0
+```
+
+donde se sustituyen los campos correspondientes por el tiempo restante y los intentos disponibles.
+
+Los intentos restantes se calculan como:
+
+$$
+INT=
+\begin{cases}
+0,&wrong\_count\ge6\\
+6-wrong\_count,&wrong\_count<6
+\end{cases}
+$$
+
+##### Pantalla de victoria
+
+Cuando:
+
+```text
+result_active = 1
+result_win    = 1
+```
+
+se genera:
+
+```text
+Línea 1: RESULTADO:
+Línea 2: GANO
+```
+
+##### Pantalla de derrota
+
+Cuando:
+
+```text
+result_active = 1
+result_win    = 0
+```
+
+se genera:
+
+```text
+Línea 1: PERDIO:
+Línea 2: P:<palabra>
+```
+
+En este caso se recorre `selected_word` y se muestra la palabra completa.
+
+##### Escritura de las dos líneas
+
+Para actualizar completamente el LCD se utilizan **34 pasos**:
+
+| Paso | Operación |
+|---:|---|
+| 0 | Comando `0x80`, cursor al inicio de línea 1 |
+| 1–16 | 16 caracteres de línea 1 |
+| 17 | Comando `0xC0`, cursor al inicio de línea 2 |
+| 18–33 | 16 caracteres de línea 2 |
+
+La FSM utilizada es:
+
+```text
+        ┌────────┐
+   ┌───►│  IDLE  │
+   │    └───┬────┘
+   │        │ pantalla cambió
+   │        ▼
+   │    ┌────────┐
+   │    │  LOAD  │
+   │    └───┬────┘
+   │        ▼
+   │    ┌────────┐
+   │    │ START  │
+   │    └───┬────┘
+   │        ▼
+   │  ┌───────────┐
+   └──│ WAIT_LCD  │
+      └─────┬─────┘
+            │
+       siguiente paso
+            │
+            └────► LOAD
+```
+
+En `LOAD`, el byte correspondiente se escribe en el registro `DATA` de `lcd_peripheral`.
+
+En `START`, se escribe `CONTROL[0]=1` y el valor apropiado de `RS`.
+
+En `WAIT_LCD`, el controlador consulta:
+
+```systemverilog
+rdata_i[8]
+```
+
+correspondiente a `busy`. La siguiente operación solamente se inicia cuando el periférico deja de estar ocupado.
+
+##### Snapshots y actualización únicamente ante cambios
+
+El módulo utiliza:
+
+```text
+line1, line2
+snap1, snap2
+shown1, shown2
+```
+
+con funciones diferentes.
+
+`line1` y `line2` representan lo que debería aparecer actualmente en pantalla.
+
+`snap1` y `snap2` contienen una copia estable de la pantalla que se está transmitiendo.
+
+`shown1` y `shown2` contienen la última pantalla que fue escrita completamente.
+
+Antes de iniciar una actualización se comprueba:
+
+```systemverilog
+!shown_valid ||
+line1 != shown1 ||
+line2 != shown2
+```
+
+Por lo tanto, el LCD solamente se vuelve a escribir cuando su contenido cambia.
+
+Cuando se detecta un cambio:
+
+```systemverilog
+snap1 <= line1;
+snap2 <= line2;
+```
+
+La actualización completa utiliza estos snapshots, evitando que una modificación de `time_left`, `revealed_mask` u otra señal produzca una pantalla compuesta parcialmente por información anterior y parcialmente por información nueva.
+
+Al completar el paso 33:
+
+```systemverilog
+shown1 <= snap1;
+shown2 <= snap2;
+shown_valid <= 1;
+```
 
 #### Relación con el sistema
+
+El módulo representa la capa intermedia entre el estado lógico del juego y el periférico físico:
+
+```text
+game_core
+   │
+   │ palabra, máscara,
+   │ tiempo, errores, resultado
+   ▼
+lcd_screen_controller
+   │
+   │ comandos y caracteres
+   ▼
+lcd_peripheral
+   │
+   ▼
+LCD 16x2
+```
+
+De esta forma, `lcd_screen_controller` determina **qué información mostrar**, mientras `lcd_peripheral` determina **cómo realizar físicamente cada transferencia**.
+
+---
 
 ### 7.9 `io_controller`
 
+El módulo `io_controller` controla los indicadores locales relacionados con el tiempo, las victorias y los eventos sonoros del juego. Sus principales funciones son multiplexar los cuatro displays de siete segmentos y generar los patrones temporales del buzzer.
+
 #### Entradas y salidas
+
+| Señal | Dirección | Ancho | Función |
+|---|---|---:|---|
+| `clk` | Entrada | 1 bit | Reloj principal |
+| `rst` | Entrada | 1 bit | Reinicio |
+| `time_left` | Entrada | 7 bits | Tiempo restante |
+| `victories` | Entrada | 7 bits | Número de victorias |
+| `letter_correct` | Entrada | 1 bit | Evento de letra correcta |
+| `letter_wrong` | Entrada | 1 bit | Evento de letra incorrecta |
+| `result_active` | Entrada | 1 bit | Estado de resultado |
+| `result_win` | Entrada | 1 bit | Indica victoria o derrota |
+| `seg` | Salida | 7 bits | Control de segmentos |
+| `an` | Salida | 4 bits | Selección del display |
+| `dp` | Salida | 1 bit | Punto decimal |
+| `buzzer_out` | Salida | 1 bit | Control del buzzer activo |
 
 #### Funcionamiento
 
-<!-- Multiplexado de 4 displays (2 dígitos tiempo, 2 dígitos victorias),
-frecuencia de refresco, segmentos/ánodos activos en bajo; LED0–LED3;
-patrones del buzzer. -->
+##### Generación del tick de 1 ms
+
+El módulo define:
+
+```systemverilog
+localparam int MS_DIV = CLK_FREQ / 1000;
+```
+
+Para 100 MHz:
+
+$$
+MS\_DIV=\frac{100\,000\,000}{1000}=100000
+$$
+
+Por lo tanto, cada 100000 ciclos del reloj se genera un pulso `ms_tick`, equivalente aproximadamente a **1 ms**.
+
+Cada vez que ocurre este pulso también se incrementa:
+
+```systemverilog
+digit <= digit + 1'b1;
+```
+
+permitiendo seleccionar secuencialmente uno de los cuatro displays.
+
+##### Multiplexación de siete segmentos
+
+La distribución implementada es:
+
+| `digit` | `an` | Valor mostrado |
+|---:|---|---|
+| 0 | `1110` | Unidades de victorias |
+| 1 | `1101` | Decenas de victorias |
+| 2 | `1011` | Unidades del tiempo |
+| 3 | `0111` | Decenas del tiempo |
+
+Debido al orden físico de los displays, visualmente se obtiene:
+
+```text
+[Tiempo decenas][Tiempo unidades][Victorias decenas][Victorias unidades]
+```
+
+Por ejemplo:
+
+```text
+time_left = 45
+victories = 2
+
+Display = 4502
+```
+
+Cada posición se mantiene seleccionada aproximadamente durante 1 ms. Por lo tanto, el recorrido de los cuatro displays requiere:
+
+$$
+4(1\,ms)=4\,ms
+$$
+
+y la frecuencia completa de refresco es:
+
+$$
+f=\frac{1}{0.004}=250\,Hz
+$$
+
+Cada dígito se actualiza aproximadamente 250 veces por segundo.
+
+Los ánodos son activos en bajo, por lo que:
+
+```text
+1110 → activa dígito 0
+1101 → activa dígito 1
+1011 → activa dígito 2
+0111 → activa dígito 3
+```
+
+Los segmentos también utilizan lógica activa en bajo. Por ejemplo:
+
+```systemverilog
+0: seg = 7'b1000000;
+1: seg = 7'b1111001;
+...
+8: seg = 7'b0000000;
+```
+
+El punto decimal permanece desactivado:
+
+```systemverilog
+assign dp = 1'b1;
+```
+
+##### Control del buzzer
+
+El diseño utiliza un buzzer activo y genera diferentes patrones temporales según el evento producido.
+
+Los tiempos implementados son:
+
+| Evento | Cantidad de beeps | Tiempo encendido | Pausa |
+|---|---:|---:|---:|
+| Letra correcta | 1 | 120 ms | — |
+| Letra incorrecta | 2 | 90 ms | 90 ms |
+| Victoria | 3 | 100 ms | 70 ms |
+| Derrota | 1 | 600 ms | — |
+
+Para una letra correcta:
+
+```text
+████████████
+   120 ms
+```
+
+Para una letra incorrecta:
+
+```text
+█████████_________█████████
+  90 ms    90 ms     90 ms
+```
+
+Para una victoria:
+
+```text
+██████████_______██████████_______██████████
+  100 ms   70 ms   100 ms   70 ms   100 ms
+```
+
+Para una derrota:
+
+```text
+████████████████████████████████████████
+                  600 ms
+```
+
+La duración se controla utilizando `ms_tick`, por lo que `buzz_ms` funciona como un contador expresado aproximadamente en milisegundos.
+
+##### Prioridad de los eventos
+
+La lógica establece una prioridad explícita:
+
+```text
+Resultado final
+      ↓
+Letra correcta
+      ↓
+Letra incorrecta
+      ↓
+Continuar patrón actual
+```
+
+Por lo tanto, un evento de resultado final tiene prioridad sobre los sonidos correspondientes a una letra.
+
+##### Detección del inicio del resultado
+
+Para evitar que el sonido de victoria o derrota se reinicie continuamente durante todo el estado `result_active`, se utiliza:
+
+```systemverilog
+logic result_d;
+wire result_start = result_active & ~result_d;
+```
+
+`result_d` almacena el valor anterior de `result_active`.
+
+Por ello, `result_start` solamente se activa durante la transición:
+
+```text
+result_active
+
+0 ──────────┐
+            │
+            └──────── 1
+              ▲
+              │
+         result_start
+```
+
+Esto genera el patrón final **una sola vez al entrar al estado de resultado**.
+
+##### Uso de buzzer activo
+
+La salida se define directamente mediante:
+
+```systemverilog
+assign buzzer_out = buzz_on;
+```
+
+El diseño no genera una onda periódica de frecuencia audible, sino que controla períodos de encendido y apagado medidos en milisegundos.
+
+Por esta razón se requiere un **buzzer activo**, ya que este incorpora internamente el oscilador encargado de producir el tono.
+
+Un buzzer pasivo necesitaría que la FPGA generara adicionalmente una señal periódica con una frecuencia dentro del rango audible.
 
 #### Relación con el sistema
 
----
+El controlador recibe directamente información del juego:
+
+```text
+                    game_core
+                        │
+        ┌───────────────┼────────────────┐
+        │               │                │
+    time_left       victories       eventos
+        │               │                │
+        └───────────────┼────────────────┘
+                        ▼
+                  io_controller
+                    │        │
+                    ▼        ▼
+               7 segmentos  Buzzer
+```
+
+El módulo no modifica el estado del juego. Su función consiste únicamente en transformar la información recibida en indicadores visuales y sonoros para el usuario.
 
 ## 8. Aplicación de PC en Python
 
