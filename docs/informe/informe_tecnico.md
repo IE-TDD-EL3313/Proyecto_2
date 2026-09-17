@@ -838,19 +838,309 @@ El acceso se resuelve con un bloque combinacional (`always_comb`) que verifica q
 
 ### 4.5 Protocolo UART asíncrono
 
-<!-- [INTEGRANTE 2] Estructura de trama (start, datos, stop), relación
-entre reloj, baud rate y sobremuestreo, y consideraciones de validación
-para recepción confiable. -->
+UART (*Universal Asynchronous Receiver-Transmitter*) es un método de comunicación serial utilizado para transmitir información entre dispositivos digitales. Su principal característica es que la comunicación es **asíncrona**, lo que significa que el transmisor y el receptor no comparten una señal física de reloj. En su lugar, ambos dispositivos deben configurarse previamente con una velocidad de transmisión compatible, denominada **baud rate**.
+
+En este proyecto se utiliza una configuración UART de **115200 baudios y formato 8N1**, donde:
+
+- **8** indica que se transmiten ocho bits de datos.
+- **N** (*None*) indica que no se utiliza bit de paridad.
+- **1** indica que se utiliza un bit de parada.
+
+#### Estructura de una trama UART
+
+En estado de reposo, la línea UART permanece en nivel lógico alto (`1`). El comienzo de una transmisión se identifica mediante un **bit de inicio o START**, que lleva la línea a nivel lógico bajo (`0`).
+
+Posteriormente se transmiten los ocho bits correspondientes al dato, comenzando por el bit menos significativo (**LSB first**). Finalmente, se transmite un **bit de parada o STOP** en nivel lógico alto.
+
+La estructura general es:
+
+```text
+                  8 bits de datos
+              ┌─────────────────────┐
+              │                     │
+Reposo  START D0 D1 D2 D3 D4 D5 D6 D7  STOP  Reposo
+   1      0    ─────── LSB → MSB ─────    1      1
+```
+
+Por lo tanto, para transmitir un byte se requieren un total de **10 bits**:
+
+$$
+N_{bits}=1+8+1=10
+$$
+
+#### Baud rate y duración del bit
+
+El *baud rate* determina la cantidad de símbolos transmitidos por segundo. Para la UART utilizada en este proyecto, cada símbolo corresponde a un bit, por lo que para una configuración de 115200 baudios la duración teórica de cada bit es:
+
+$$
+T_{bit}=\frac{1}{115200}
+$$
+
+$$
+T_{bit}\approx8.68\,\mu s
+$$
+
+Debido a que una trama completa contiene 10 bits, el tiempo aproximado para transmitir un byte es:
+
+$$
+T_{byte}=10T_{bit}
+$$
+
+$$
+T_{byte}\approx86.8\,\mu s
+$$
+
+El sistema implementado en la FPGA utiliza un reloj de **100 MHz**, cuyo período es:
+
+$$
+T_{clk}=\frac{1}{100\times10^6}=10\,ns
+$$
+
+Por lo tanto, la cantidad teórica de ciclos de reloj correspondientes a un bit UART es:
+
+$$
+N_{clk}=\frac{100\,000\,000}{115200}\approx868.06
+$$
+
+En la implementación se utiliza una división entera:
+
+```systemverilog
+BIT_CLKS = CLK_FREQ / BAUD_RATE;
+```
+
+por lo que se utilizan **868 ciclos de reloj por bit**.
+
+#### Recepción y muestreo de los datos
+
+Debido a que UART no proporciona una señal de reloj junto con los datos, el receptor debe determinar los instantes apropiados para realizar el muestreo de la señal.
+
+La recepción comienza cuando se detecta una transición desde el estado de reposo hacia un nivel lógico bajo, correspondiente a un posible bit de inicio.
+
+En la implementación se espera aproximadamente la mitad de la duración de un bit:
+
+$$
+HALF\_CLKS=\frac{BIT\_CLKS}{2}
+$$
+
+$$
+HALF\_CLKS=\frac{868}{2}=434
+$$
+
+Después de esta espera se vuelve a comprobar la señal. Si continúa en nivel bajo, se considera válido el bit START. Esta comprobación permite evitar que una transición momentánea sea interpretada inmediatamente como el comienzo de una trama válida.
+
+Posteriormente, los bits de datos se muestrean en intervalos correspondientes aproximadamente a un período completo de bit.
+
+De forma conceptual:
+
+```text
+Detección
+de START
+    │
+    ▼
+Espera aproximadamente
+medio período de bit
+    │
+    ▼
+Confirmación de START
+    │
+    ▼
+Muestreo de D0
+    │
+  1 Tbit
+    ▼
+Muestreo de D1
+    │
+   ...
+    ▼
+Muestreo de D7
+    │
+    ▼
+Verificación de STOP
+```
+
+Finalmente, el receptor comprueba que el bit de parada se encuentre en nivel lógico alto. Si esta condición se cumple, el byte recibido se considera válido y puede ser utilizado por el resto del sistema.
+
+En este proyecto, estos principios se implementan dentro de `uart_peripheral`, que se encarga de transformar la señal serial UART en bytes de 8 bits y de realizar el proceso inverso durante la transmisión.
+
+---
 
 ### 4.6 Controlador LCD HD44780 / PmodCLP
 
-<!-- [INTEGRANTE 2] Funcionamiento general del controlador HD44780,
-interfaz paralela, secuencia de inicialización y temporización. -->
+El sistema utiliza un módulo LCD alfanumérico de **16 caracteres por 2 líneas**, controlado mediante una interfaz compatible con el controlador **HD44780**. Este tipo de pantalla permite representar caracteres alfanuméricos mediante el envío de comandos y datos desde un sistema digital.
+
+A diferencia de UART, que utiliza una transmisión serial, el LCD empleado en el proyecto utiliza una **interfaz paralela de 8 bits**, permitiendo transmitir simultáneamente los ocho bits correspondientes a un comando o carácter.
+
+#### Interfaz paralela
+
+Las principales señales utilizadas para controlar el LCD son:
+
+| Señal | Función |
+|---|---|
+| `DATA[7:0]` | Bus paralelo utilizado para transmitir comandos o caracteres |
+| `RS` | Selecciona entre registro de instrucciones y registro de datos |
+| `RW` | Selecciona entre operación de lectura y escritura |
+| `E` | Señal de habilitación utilizada para ejecutar la transferencia |
+
+La señal `RS` permite determinar la naturaleza del byte enviado:
+
+```text
+RS = 0 → instrucción/comando
+RS = 1 → dato o carácter
+```
+
+Por ejemplo, cuando se desea enviar el carácter `A`, cuyo código ASCII es `0x41`, se coloca dicho valor en el bus `DATA[7:0]` y se selecciona la operación correspondiente a datos mediante `RS`.
+
+Por otra parte, para enviar una instrucción de configuración, `RS` se mantiene en `0`.
+
+La señal `E` (*Enable*) permite indicar al controlador LCD cuándo debe aceptar la información presente en el bus de datos. Debido a esto, las señales de datos y control deben mantenerse estables durante los intervalos temporales requeridos alrededor del pulso de habilitación.
+
+#### Secuencia de inicialización
+
+Después del encendido, el LCD debe configurarse antes de comenzar a mostrar normalmente los caracteres. Para ello se utiliza una secuencia de comandos de inicialización.
+
+En el proyecto se emplean los siguientes comandos principales:
+
+| Comando | Función |
+|---|---|
+| `0x38` | Configuración de interfaz de 8 bits y dos líneas |
+| `0x0C` | Encendido del display |
+| `0x01` | Limpieza de la pantalla |
+| `0x06` | Incremento automático de la posición del cursor |
+
+La secuencia general puede representarse como:
+
+```text
+Encendido
+   │
+   ▼
+Espera inicial
+   │
+   ▼
+  0x38
+   │
+   ▼
+  0x0C
+   │
+   ▼
+  0x01
+   │
+   ▼
+  0x06
+   │
+   ▼
+LCD disponible
+```
+
+La espera inicial es necesaria debido a que el controlador requiere un determinado tiempo después de la alimentación antes de aceptar instrucciones.
+
+#### Temporización del LCD
+
+Las operaciones del LCD no son instantáneas. El controlador necesita tiempos mínimos para establecer las señales de datos y control, generar el pulso de habilitación y completar internamente cada instrucción.
+
+Conceptualmente, una transferencia puede dividirse en las siguientes etapas:
+
+```text
+Colocar DATA y RS
+        │
+        ▼
+Tiempo de establecimiento
+        │
+        ▼
+Activar E
+        │
+        ▼
+Mantener E
+        │
+        ▼
+Desactivar E
+        │
+        ▼
+Esperar ejecución
+```
+
+Algunas instrucciones, como limpiar la pantalla o regresar el cursor al inicio, requieren tiempos de ejecución mayores que una escritura normal de carácter.
+
+Por esta razón, el diseño implementado utiliza estados y contadores temporales para garantizar que las señales del LCD respeten los intervalos requeridos.
+
+En el proyecto esta responsabilidad corresponde principalmente al módulo `lcd_peripheral`, mientras que `lcd_screen_controller_completo` determina qué información debe mostrarse. Esta separación permite distinguir entre la **temporización física del dispositivo** y la **información lógica presentada al usuario**.
+
+---
 
 ### 4.7 Metaestabilidad y sincronización de señales asíncronas
 
-<!-- [INTEGRANTE 1 o 2] Aplicado a las entradas de botones y a la
-recepción UART. -->
+En un sistema digital síncrono, los registros internos actualizan su estado con respecto a los flancos de una señal de reloj. Sin embargo, algunas entradas externas pueden cambiar en cualquier instante y no necesariamente se encuentran sincronizadas con dicho reloj.
+
+Cuando una señal asíncrona cambia demasiado cerca del instante en que un flip-flop captura su entrada, pueden incumplirse los tiempos de establecimiento (*setup*) o mantenimiento (*hold*). En esta situación, el flip-flop puede entrar temporalmente en un estado denominado **metaestable**, en el cual su salida no alcanza inmediatamente un nivel lógico estable.
+
+Una señal asíncrona conectada directamente a diferentes bloques de lógica podría, por lo tanto, provocar comportamientos no deseados.
+
+#### Sincronizador de dos etapas
+
+Una técnica ampliamente utilizada para reducir la probabilidad de propagación de la metaestabilidad consiste en utilizar dos flip-flops consecutivos controlados por el reloj del sistema.
+
+La estructura general es:
+
+```text
+Señal
+asíncrona
+    │
+    ▼
+┌─────────┐
+│  FF 1   │
+└────┬────┘
+     │
+     ▼
+┌─────────┐
+│  FF 2   │
+└────┬────┘
+     │
+     ▼
+Señal sincronizada
+```
+
+El primer flip-flop recibe directamente la señal asíncrona y, por lo tanto, es el elemento con mayor posibilidad de experimentar metaestabilidad. El segundo flip-flop proporciona un ciclo adicional para que la salida del primero alcance un valor lógico estable antes de ser utilizada por la lógica interna.
+
+Es importante señalar que este procedimiento **no elimina matemáticamente la posibilidad de metaestabilidad**, pero reduce significativamente la probabilidad de que esta se propague al resto del circuito.
+
+#### Aplicación a la recepción UART
+
+La entrada `uart_rx_i` proviene de un dispositivo externo y no se encuentra sincronizada con el reloj de 100 MHz de la FPGA. Por esta razón, antes de ser utilizada por la máquina de estados del receptor se implementa un sincronizador de dos etapas.
+
+En el diseño se utilizan las señales:
+
+```systemverilog
+logic rx_ff1, rx_sync;
+```
+
+y la sincronización se realiza mediante:
+
+```systemverilog
+rx_ff1  <= uart_rx_i;
+rx_sync <= rx_ff1;
+```
+
+Por lo tanto, el recorrido de la señal es:
+
+```text
+uart_rx_i
+    │
+    ▼
+  rx_ff1
+    │
+    ▼
+  rx_sync
+    │
+    ▼
+FSM del receptor UART
+```
+
+La máquina de estados no utiliza directamente `uart_rx_i`, sino la versión sincronizada `rx_sync`.
+
+Este mecanismo es especialmente importante en UART debido a que el transmisor externo y la FPGA operan con referencias de reloj independientes.
+
+El mismo principio de sincronización puede aplicarse a otras entradas externas del sistema, como los pulsadores, antes de que sean utilizadas por la lógica secuencial.
+
+---
 
 ### 4.8 Antirrebote de pulsadores (debouncing)
 
@@ -860,9 +1150,127 @@ En este proyecto, `btnC`, `btnU` y `btnD` se conectan directamente desde `hangma
 
 ### 4.9 Multiplexación de displays de siete segmentos
 
-<!-- [INTEGRANTE 2] Aplicado a los 4 dígitos (tiempo y victorias). -->
+Los displays de siete segmentos permiten representar valores numéricos mediante la activación de siete segmentos individuales identificados normalmente como `a`, `b`, `c`, `d`, `e`, `f` y `g`.
 
----
+En la Basys 3 se dispone de varios dígitos que comparten las líneas correspondientes a los segmentos. Debido a esta arquitectura, no se controlan todos los dígitos de manera completamente independiente al mismo tiempo. En su lugar, se utiliza una técnica denominada **multiplexación temporal**.
+
+#### Principio de multiplexación
+
+La multiplexación consiste en habilitar un único dígito durante un intervalo corto, colocar en las líneas de segmentos el patrón correspondiente a ese dígito y posteriormente cambiar al siguiente.
+
+El proceso se repite continuamente:
+
+```text
+Dígito 0
+   │
+   ▼
+Dígito 1
+   │
+   ▼
+Dígito 2
+   │
+   ▼
+Dígito 3
+   │
+   └───────────┐
+               │
+               ▼
+            Repetir
+```
+
+Aunque solamente un dígito se encuentra habilitado en cada instante, la conmutación se realiza suficientemente rápido para que visualmente los cuatro dígitos parezcan permanecer encendidos simultáneamente.
+
+#### Aplicación en el proyecto
+
+En el sistema se utilizan cuatro dígitos para representar dos variables:
+
+```text
+┌────────┬────────┬──────────┬──────────┐
+│ Tiempo │ Tiempo │ Victorias│ Victorias│
+│ decenas│ unidades│ decenas │ unidades │
+└────────┴────────┴──────────┴──────────┘
+```
+
+Los dos dígitos más significativos se utilizan para mostrar el **tiempo restante**, mientras que los otros dos representan el número acumulado de **victorias**.
+
+Por ejemplo:
+
+```text
+Tiempo restante = 45 s
+Victorias       = 02
+
+Display:
+
+4 5 0 2
+```
+
+Para obtener las unidades y decenas pueden utilizarse operaciones aritméticas como:
+
+$$
+unidades=N\bmod10
+$$
+
+y:
+
+$$
+decenas=\left\lfloor\frac{N}{10}\right\rfloor
+$$
+
+De esta manera, para un valor de tiempo igual a 45:
+
+$$
+unidades=45\bmod10=5
+$$
+
+$$
+decenas=\left\lfloor\frac{45}{10}\right\rfloor=4
+$$
+
+#### Frecuencia de refresco
+
+El reloj principal de 100 MHz es demasiado rápido para utilizarlo directamente como intervalo de selección visible de cada dígito. Por esta razón, se utiliza un divisor de frecuencia que genera una referencia temporal más lenta.
+
+En la implementación se genera un evento aproximadamente cada **1 ms**. En cada evento se selecciona el siguiente dígito:
+
+```text
+t = 0 ms → dígito 0
+t = 1 ms → dígito 1
+t = 2 ms → dígito 2
+t = 3 ms → dígito 3
+t = 4 ms → dígito 0
+...
+```
+
+Por lo tanto, un ciclo completo de refresco de los cuatro dígitos requiere aproximadamente:
+
+$$
+T_{refresh}=4\,ms
+$$
+
+y la frecuencia de refresco completa es:
+
+$$
+f_{refresh}=\frac{1}{4\,ms}=250\,Hz
+$$
+
+Cada dígito se actualiza aproximadamente **250 veces por segundo**, proporcionando una visualización estable para el usuario.
+
+#### Señales activas en bajo
+
+Los ánodos y segmentos utilizados en la tarjeta son controlados mediante lógica activa en bajo. Esto significa que un valor lógico `0` activa el elemento correspondiente, mientras que un valor lógico `1` lo desactiva.
+
+Por ejemplo, para los ánodos:
+
+```text
+an = 1110 → dígito 0 habilitado
+an = 1101 → dígito 1 habilitado
+an = 1011 → dígito 2 habilitado
+an = 0111 → dígito 3 habilitado
+```
+
+La misma consideración debe aplicarse al patrón de los siete segmentos. Por esta razón, el decodificador utilizado por el sistema genera los patrones considerando la lógica activa en bajo de la tarjeta.
+
+La multiplexación permite controlar los cuatro displays utilizando un único conjunto compartido de líneas para los segmentos, reduciendo la cantidad de recursos físicos necesarios y permitiendo presentar simultáneamente el tiempo restante y el número de victorias.
 
 ## 5. Metodología
 
