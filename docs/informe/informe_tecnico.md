@@ -1285,9 +1285,11 @@ El desarrollo se realizó siguiendo, en términos generales, el orden planteado 
 
 ### 5.3 Herramientas
 
-<!-- [INTEGRANTE 1] Vivado (versión), simulador utilizado, lenguaje
-(SystemVerilog), Python y librería `pyserial`, tarjeta Basys 3. -->
-
+- Síntesis e implementación: Xilinx Vivado 2025.2.
+- Simulación: simulador integrado de Vivado (XSIM).
+- Lenguaje de descripción de hardware: SystemVerilog (RTL sintetizable).
+- Aplicación de PC: Python 3 con la librería pyserial, desarrollada en Visual Studio Code (`juego_uart.py`).
+- Tarjeta de desarrollo: Digilent Basys 3.
 ---
 
 ## 6. Arquitectura general
@@ -1316,7 +1318,7 @@ nivel definido en docs/diseño/diseño.md. -->
 
 ![Diagrama general de bloques](Imagenes/diagrama_bloques.png)
 
-**Figura 1.** Diagrama de bloques del sistema completo `hangman_top_completo`.
+**Figura 1.** Diagrama de bloques del sistema completo `hangman_top`.
 
 ### 6.3 Flujo de una partida
 
@@ -1346,7 +1348,7 @@ Un apartado por módulo, todos con el MISMO nivel de encabezado para las
 subsecciones internas (####), para no repetir el error de estructura del
 informe anterior. -->
 
-### 7.1 `hangman_top_completo`
+### 7.1 `hangman_top`
 
 #### Entradas y salidas
 
@@ -1371,7 +1373,7 @@ informe anterior. -->
  
 `hangman_top` actúa como el módulo integrador del proyecto: no implementa reglas del juego, sino que conecta el bloque de control (`game_core`), el bloque de comunicación (`uart_game_interface`) y los bloques de visualización/retroalimentación (`lcd_screen_controller`/`lcd_peripheral`, `io_controller`), constituyendo el punto único de entrada/salida física del sistema hacia la Basys 3.
 
-### 7.2 `button_conditioner`
+### 7.2 `Manejo de botones`
 Aunque no existe un módulo `button_conditioner` independiente en la
 implementación final; ver sección 1.3 y 4.8 para la justificación de esta
 desviación respecto al planteamiento original. Esta subsección documenta
