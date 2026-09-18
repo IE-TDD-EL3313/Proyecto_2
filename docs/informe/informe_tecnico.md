@@ -1434,14 +1434,32 @@ Además de las salidas anteriores (registradas internamente), `game_core` mantie
  
 #### Diagrama de estados
  
-<!-- [INTEGRANTE 1] Insertar aquí el diagrama de estados. -->
- 
-![Diagrama de estados de game_core](fig/fsm_game_core.png)
- 
-**Figura 2.** Diagrama de estados de `game_core`: `MENU → GAME → RESULT → MENU`.
- 
+#### Diagrama de estados
+
+```text
+                    easy_pulse OR hard_pulse
+        ┌───────────────────────────────────────────┐
+        │                                           ▼
+   ┌─────────┐                                ┌───────────┐
+   │  MENU   │                                │   GAME    │
+   └─────────┘                                └───────────┘
+        ▲                                           │
+        │                        ┌──────────────────┼──────────────────┐
+        │                        │                  │                  │
+        │                  victoria            derrota (intentos)  derrota (tiempo)
+        │           revealed_mask|match_mask     wrong_count==5      time_left<=1
+        │               == valid_mask           (6ta letra mala)   (sec_count agota)
+        │                        │                  │                  │
+        │                        ▼                  ▼                  ▼
+        │                          ┌─────────────────────────────────┐
+        └───── result_secs ==──────│              RESULT             │
+               RESULT_TIME-1       └─────────────────────────────────┘
+```
+
+**Figura 4.** Diagrama de estados de `game_core`: `MENU → GAME → RESULT → MENU`, con las tres condiciones de entrada a `RESULT` (victoria, derrota por intentos, derrota por tiempo) y la condición única de retorno a `MENU`.
+
 Las transiciones de la FSM, y sus condiciones exactas tomadas del código, son:
- 
+
 | Transición | Condición |
 |---|---|
 | `MENU → GAME` | `easy_pulse` o `hard_pulse` (flanco de subida de `btnU`/`btnD`) |
@@ -1449,7 +1467,6 @@ Las transiciones de la FSM, y sus condiciones exactas tomadas del código, son:
 | `GAME → RESULT` (derrota por intentos) | `wrong_count == 5` antes de incrementar a 6 (sexta letra incorrecta) |
 | `GAME → RESULT` (derrota por tiempo) | `time_left <= 1` al expirar el conteo de un segundo (`sec_count == CLK_FREQ-1`) |
 | `RESULT → MENU` | `result_secs == RESULT_TIME-1` tras el conteo de segundos en `RESULT` |
- 
 #### Funcionamiento
  
 En el estado `MENU`, el LFSR avanza en cada ciclo de reloj y se calcula de forma combinacional el índice candidato de palabra (`candidate_index`), ajustado si coincide con `last_index`. Al detectarse `easy_pulse` o `hard_pulse`, se cargan `selected_word`, `word_length` y `last_index` desde `word_bank`, se reinician los contadores de la partida y se transita a `GAME` con el tiempo correspondiente al modo elegido.
@@ -3321,9 +3338,81 @@ Python interpreta y muestra
 
 ## 9. Asignación de pines
 
-<!-- [INTEGRANTE 1] Tabla de constraints (.xdc) de la Basys 3: reloj,
-botones, UART, LCD (PmodCLP), displays, LED, buzzer. -->
+La siguiente tabla resume la asignación de pines de la Basys 3 definida en el archivo de constraints (`hangman.xdc`) del proyecto. Todas las señales usan el estándar eléctrico `LVCMOS33`.
 
+### Reloj
+
+| Señal | Pin | Descripción |
+|---|---|---|
+| `CLK100MHZ` | W5 | Reloj principal del sistema, 100 MHz (`sys_clk_pin`, periodo 10.000 ns). |
+
+### Botones
+
+| Señal | Pin | Descripción |
+|---|---|---|
+| `btnC` | U18 | Botón central — reset general. |
+| `btnU` | T18 | Botón superior — inicio de partida en modo fácil. |
+| `btnD` | U17 | Botón inferior — inicio de partida en modo difícil. |
+
+### UART (USB)
+
+| Señal | Pin | Descripción |
+|---|---|---|
+| `RsRx` | B18 | Entrada serial UART desde la PC. |
+| `RsTx` | A18 | Salida serial UART hacia la PC. |
+
+### LED de estado
+
+| Señal | Pin | Descripción |
+|---|---|---|
+| `led[0]` | U16 | Estado `menu_active`. |
+| `led[1]` | E19 | Estado `game_active`. |
+| `led[2]` | U19 | Estado `result_active`. |
+| `led[3]` | V19 | Estado `hard_mode`. |
+
+### LCD PmodCLP (HD44780) — datos, conector JXADC (J1)
+
+| Señal | Pin | Descripción |
+|---|---|---|
+| `lcd_data[0]` | J3 | Bus de datos LCD, bit 0 (DB0). |
+| `lcd_data[1]` | L3 | Bus de datos LCD, bit 1 (DB1). |
+| `lcd_data[2]` | M2 | Bus de datos LCD, bit 2 (DB2). |
+| `lcd_data[3]` | N2 | Bus de datos LCD, bit 3 (DB3). |
+| `lcd_data[4]` | K3 | Bus de datos LCD, bit 4 (DB4). |
+| `lcd_data[5]` | M3 | Bus de datos LCD, bit 5 (DB5). |
+| `lcd_data[6]` | M1 | Bus de datos LCD, bit 6 (DB6). |
+| `lcd_data[7]` | N1 | Bus de datos LCD, bit 7 (DB7). |
+
+### LCD PmodCLP — control, conector JA (J2)
+
+| Señal | Pin | Descripción |
+|---|---|---|
+| `lcd_rs` | H1 | Selección de registro (J2‑1, `RS` → JA7). |
+| `lcd_rw` | K2 | Lectura/escritura (J2‑2, `RW` → JA8). |
+| `lcd_e` | H2 | Habilitación/*enable* (J2‑3, `E` → JA9). |
+
+### Display de siete segmentos
+
+| Señal | Pin | Descripción |
+|---|---|---|
+| `seg[0]` | W7 | Segmento A. |
+| `seg[1]` | W6 | Segmento B. |
+| `seg[2]` | U8 | Segmento C. |
+| `seg[3]` | V8 | Segmento D. |
+| `seg[4]` | U5 | Segmento E. |
+| `seg[5]` | V5 | Segmento F. |
+| `seg[6]` | U7 | Segmento G. |
+| `dp` | V7 | Punto decimal. |
+| `an[0]` | U2 | Ánodo del dígito 0. |
+| `an[1]` | U4 | Ánodo del dígito 1. |
+| `an[2]` | V4 | Ánodo del dígito 2. |
+| `an[3]` | W4 | Ánodo del dígito 3. |
+
+### Buzzer
+
+| Señal | Pin | Descripción |
+|---|---|---|
+| `buzzer_out` | A14 | Buzzer activo, conectado a JB1. |
 ---
 
 ## 10. Presentación de resultados
