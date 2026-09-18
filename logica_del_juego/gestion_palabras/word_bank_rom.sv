@@ -20,7 +20,10 @@
 // Si se necesita cambiar el banco de palabras, se debe regenerar esta tabla
 // con el script (ver docs/, script gen_rom.py) y volver a pegar los valores.
 // ============================================================================
-module word_bank_rom (
+module word_bank_rom #(
+    parameter bit          MODO_PRUEBA    = 1'b0,
+    parameter logic [63:0] PALABRA_PRUEBA = 64'h4000000000093DA1 // AMOR
+) (
     input  logic [7:0]  direccion,     // indice ya ajustado (0-49)
     output logic [63:0] palabra_rom
 );
@@ -81,5 +84,10 @@ module word_bank_rom (
         rom[49] = 64'h7000000068F948A4; // DERROTA (7)
     end
 
-    always_comb palabra_rom = rom[direccion[5:0]];
+    always_comb begin
+        if (MODO_PRUEBA)
+            palabra_rom = PALABRA_PRUEBA;
+        else
+            palabra_rom = rom[direccion[5:0]];
+    end
 endmodule

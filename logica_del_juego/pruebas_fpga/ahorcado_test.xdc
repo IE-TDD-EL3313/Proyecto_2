@@ -1,4 +1,7 @@
 ## ============================================================================
+
+set_property CFGBVS VCCO [current_design]
+set_property CONFIG_VOLTAGE 3.3 [current_design]
 ## ahorcado_test.xdc
 ## Constraints para top_test_ahorcado.sv en el Nexys4 (rev B).
 ## Basado en Nexys-4-Master.xdc; solo se descomentan y renombran los pines
@@ -12,7 +15,7 @@ set_property PACKAGE_PIN E3 [get_ports clk]
     create_clock -add -name sys_clk_pin -period 10.00 -waveform {0 5} [get_ports clk]
 
 ## ---------------- Botones ----------------
-## CPU RESET: activo en ALTO (ver top_test_ahorcado.sv: rst_n = ~btnCpuReset)
+## CPU RESET: activo en BAJO; se conecta directamente a rst_n
 set_property PACKAGE_PIN C12 [get_ports btnCpuReset]
     set_property IOSTANDARD LVCMOS33 [get_ports btnCpuReset]
 
@@ -24,21 +27,15 @@ set_property PACKAGE_PIN E16 [get_ports btnC]
 set_property PACKAGE_PIN F15 [get_ports btnU]
     set_property IOSTANDARD LVCMOS33 [get_ports btnU]
 
-## BTNR = nueva_letra (envia la letra puesta en sw[4:0])
-set_property PACKAGE_PIN R10 [get_ports btnR]
-    set_property IOSTANDARD LVCMOS33 [get_ports btnR]
+## BTND = rst_pulse (reiniciar el juego sin reiniciar la electronica)
+set_property PACKAGE_PIN V10 [get_ports btnD]
+    set_property IOSTANDARD LVCMOS33 [get_ports btnD]
 
-## ---------------- Switches: sw[4:0] = codigo de letra (1-26, A=00001) ------
-set_property PACKAGE_PIN U9 [get_ports {sw[0]}]
-    set_property IOSTANDARD LVCMOS33 [get_ports {sw[0]}]
-set_property PACKAGE_PIN U8 [get_ports {sw[1]}]
-    set_property IOSTANDARD LVCMOS33 [get_ports {sw[1]}]
-set_property PACKAGE_PIN R7 [get_ports {sw[2]}]
-    set_property IOSTANDARD LVCMOS33 [get_ports {sw[2]}]
-set_property PACKAGE_PIN R6 [get_ports {sw[3]}]
-    set_property IOSTANDARD LVCMOS33 [get_ports {sw[3]}]
-set_property PACKAGE_PIN R5 [get_ports {sw[4]}]
-    set_property IOSTANDARD LVCMOS33 [get_ports {sw[4]}]
+## ---------------- USB-UART ----------------
+set_property PACKAGE_PIN C4 [get_ports RsRx]
+    set_property IOSTANDARD LVCMOS33 [get_ports RsRx]
+set_property PACKAGE_PIN D4 [get_ports RsTx]
+    set_property IOSTANDARD LVCMOS33 [get_ports RsTx]
 
 ## ---------------- LEDs de diagnostico: led[9:0] ----------------
 set_property PACKAGE_PIN T8 [get_ports {led[0]}]
@@ -99,7 +96,7 @@ set_property PACKAGE_PIN M1 [get_ports {an[7]}]
     set_property IOSTANDARD LVCMOS33 [get_ports {an[7]}]
 
 ## ============================================================================
-## NOTA: sw[15:5] y el resto de conectores (Pmod, VGA, etc.) no se usan en
+## NOTA: los switches y el resto de conectores (Pmod, VGA, etc.) no se usan en
 ## este harness de prueba y se dejan sin declarar (Vivado los ignora si no
 ## aparecen como puertos del top). Antes de la integracion final con UART y
 ## LCD, este archivo debe fusionarse con los constraints de esos bloques.

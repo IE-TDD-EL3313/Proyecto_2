@@ -10,7 +10,10 @@
 // pedir_palabra en el ciclo N -> palabra_rom disponible en el ciclo N+1 ->
 // letras_palabra/longitud_palabra/palabra_lista se cargan en el ciclo N+1.
 // ============================================================================
-module gestion_palabras (
+module gestion_palabras #(
+    parameter bit          MODO_PRUEBA    = 1'b0,
+    parameter logic [63:0] PALABRA_PRUEBA = 64'h4000000000093DA1 // AMOR
+) (
     input  logic        clk,
     input  logic        rst_n,
     input  logic        dificultad,        // 0=Facil, 1=Dificil
@@ -19,7 +22,8 @@ module gestion_palabras (
     input  logic        validar,           // pulso, 1 ciclo
     output logic [3:0]  longitud_palabra,
     output logic        palabra_lista,     // pulso, 1 ciclo
-    output logic [11:0] mask_coincidencia
+    output logic [11:0] mask_coincidencia,
+    output logic [59:0] palabra_codificada // 12 letras, 5 bits por letra
 );
 
     // ---------------- LFSR ----------------
@@ -41,7 +45,13 @@ module gestion_palabras (
     // ---------------- ROM (latencia 1 ciclo) ----------------
     logic [7:0]  direccion_rom;
     logic [63:0] palabra_rom;
-    word_bank_rom u_rom (.direccion(direccion_rom), .palabra_rom(palabra_rom));
+    word_bank_rom #(
+        .MODO_PRUEBA   (MODO_PRUEBA),
+        .PALABRA_PRUEBA(PALABRA_PRUEBA)
+    ) u_rom (
+        .direccion   (direccion_rom),
+        .palabra_rom (palabra_rom)
+    );
 
     logic pedir_d;
     always_ff @(posedge clk or negedge rst_n) begin
@@ -57,6 +67,11 @@ module gestion_palabras (
 
     // ---------------- Registro Palabra + Comparador ----------------
     logic [4:0] letras_palabra [0:11];
+
+    always_comb begin
+        for (int i = 0; i < 12; i++)
+            palabra_codificada[(i*5) +: 5] = letras_palabra[i];
+    end
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin

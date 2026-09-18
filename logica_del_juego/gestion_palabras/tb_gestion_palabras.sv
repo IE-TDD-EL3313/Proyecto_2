@@ -14,6 +14,7 @@ module tb_gestion_palabras;
     logic [3:0]  longitud_palabra;
     logic        palabra_lista;
     logic [11:0] mask_coincidencia;
+    logic [59:0] palabra_codificada;
 
     int errores = 0;
     int pruebas = 0;

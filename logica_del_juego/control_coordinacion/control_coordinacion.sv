@@ -31,6 +31,9 @@ module control_coordinacion (
     output logic        resultado_final,
     output logic [7:0]  partidas_ganadas_bcd,
     output logic        enviar_trama,
+    output logic        evento_letra,
+    output logic [1:0]  resultado_letra,
+    output logic [1:0]  causa_final,
     output logic [1:0]  evento_sonido
 );
     logic [2:0] cmd;
@@ -50,6 +53,8 @@ module control_coordinacion (
         .pedir_palabra(pedir_palabra), .validar(validar),
         .tiempo_activo(tiempo_activo), .estado_juego(estado_juego),
         .resultado_final(resultado_final), .enviar_trama(enviar_trama),
+        .evento_letra(evento_letra), .resultado_letra(resultado_letra),
+        .causa_final(causa_final),
         .evento_sonido(evento_sonido), .cmd(cmd)
     );
 
