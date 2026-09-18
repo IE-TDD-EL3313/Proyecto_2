@@ -1315,7 +1315,7 @@ A diferencia del árbol propuesto en el planteamiento del diseño, no existe un 
 
 El diagrama de primer nivel presenta el sistema completo `hangman_top` como una única caja negra, mostrando únicamente sus entradas (reloj, botones, entrada UART) y salidas (salida UART, LCD, displays de siete segmentos, LED de estado, buzzer) hacia el exterior.
 
-![Diagrama de primer nivel del sistema](fig/Primer_nivel.png)
+![Diagrama de primer nivel del sistema](fig/Primer_Nivel.png)
 
 **Figura 1.** Diagrama de primer nivel de `hangman_top`: interfaces externas del sistema completo.
 
