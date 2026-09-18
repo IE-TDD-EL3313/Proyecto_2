@@ -877,7 +877,7 @@ T_{bit}=\frac{1}{115200}
 $$
 
 $$
-T_{bit}\approx8.68\\mu s
+T_{bit}\approx8.68\mu s
 $$
 
 Debido a que una trama completa contiene 10 bits, el tiempo aproximado para transmitir un byte es:
@@ -887,7 +887,7 @@ T_{byte}=10T_{bit}
 $$
 
 $$
-T_{byte}\approx86.8\\mu s
+T_{byte}\approx86.8\mu s
 $$
 
 El sistema implementado en la FPGA utiliza un reloj de **100 MHz**, cuyo período es:
