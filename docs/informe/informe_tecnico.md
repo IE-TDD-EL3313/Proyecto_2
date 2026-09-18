@@ -1349,7 +1349,7 @@ modo → selección de palabra → recepción de letra → validación → repet
 
 El diagrama de tercer nivel muestra la descomposición interna de los bloques del segundo nivel, hasta el grado de detalle que sirvió de base para el diseño en SystemVerilog. Se incluye aquí como referencia general antes de describir cada módulo por separado en la sección 7.
 
-![Diagrama de tercer nivel del sistema](fig/diagrama_bloques_nivel3.png)
+![Diagrama de tercer nivel del sistema](fig/Diagrama_Tercer_Nivel.png)
 
 **Figura 3.** Diagrama de tercer nivel según el planteamiento del diseño (`docs/diseño/diseño.md`).
 
