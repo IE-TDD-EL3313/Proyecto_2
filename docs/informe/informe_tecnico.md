@@ -893,7 +893,7 @@ $$
 El sistema implementado en la FPGA utiliza un reloj de **100 MHz**, cuyo período es:
 
 $$
-T_{clk}=\frac{1}{100\times10^6}=10\,ns
+T_{clk}=\frac{1}{100\times10^6}=10\ns
 $$
 
 Por lo tanto, la cantidad teórica de ciclos de reloj correspondientes a un bit UART es:
@@ -1244,13 +1244,13 @@ t = 4 ms → dígito 0
 Por lo tanto, un ciclo completo de refresco de los cuatro dígitos requiere aproximadamente:
 
 $$
-T_{refresh}=4\,ms
+T_{refresh}=4\ms
 $$
 
 y la frecuencia de refresco completa es:
 
 $$
-f_{refresh}=\frac{1}{4\,ms}=250\,Hz
+f_{refresh}=\frac{1}{4\,ms}=250\Hz
 $$
 
 Cada dígito se actualiza aproximadamente **250 veces por segundo**, proporcionando una visualización estable para el usuario.
@@ -2633,13 +2633,13 @@ Display = 4502
 Cada posición se mantiene seleccionada aproximadamente durante 1 ms. Por lo tanto, el recorrido de los cuatro displays requiere:
 
 $$
-4(1\,ms)=4\,ms
+4(1\,ms)=4\ms
 $$
 
 y la frecuencia completa de refresco es:
 
 $$
-f=\frac{1}{0.004}=250\,Hz
+f=\frac{1}{0.004}=250\Hz
 $$
 
 Cada dígito se actualiza aproximadamente 250 veces por segundo.
