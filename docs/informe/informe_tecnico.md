@@ -3538,19 +3538,18 @@ retardo si existieron y su causa. -->
 de recursos: ¿hay margen de timing?, ¿qué módulo consume más recursos y
 por qué?, ¿el diseño sería escalable a un banco de palabras más grande? -->
 
-### 11.5 Problemas y soluciones
+### 11.5 Principales retos, problemas y soluciones
 
-<!-- [INTEGRANTE 3, con aportes de 1 y 2] Igual que en el Proyecto 1, usar
-una tabla: Problema | Causa probable | Diagnóstico realizado | Solución
-aplicada o recomendada. Incluir explícitamente, si aplica: UART sin FIFO,
-LFSR con semilla fija, tiempos de espera conservadores del LCD, buzzer
-activo en vez de pasivo. -->
+Durante el desarrollo del proyecto se presentaron diversos retos asociados principalmente con la integración de los subsistemas, la comunicación UART, el control del LCD y la verificación conjunta. Estos desafíos requirieron realizar pruebas individuales de los módulos antes de completar la integración del sistema.
 
-| Problema | Causa probable | Diagnóstico realizado | Solución aplicada o recomendada |
+| Problema o reto | Causa probable | Diagnóstico realizado | Solución aplicada |
 |---|---|---|---|
-| | | | |
-
----
+| Integración de UART entre FPGA y PC | Diferencias de temporización y manejo del protocolo | Pruebas individuales de transmisión y recepción | Implementación de uart_peripheral y protocolo estructurado con encabezado 0xA5 |
+| Control del LCD PmodCLP | Temporizaciones y conexiones físicas | Pruebas de comandos individuales y revisión de la conexión | Secuencia de inicialización y control mediante lcd_peripheral |
+| Selección pseudoaleatoria de palabras | Adaptación del LFSR al rango de palabras | Verificación de los índices generados | Uso de módulo 50 y módulo 30 según dificultad |
+| Detección de letras repetidas | Necesidad de conservar las letras usadas | Pruebas con entradas repetidas | Máscara used_letters[25:0] |
+| Integración de varios periféricos | Todos trabajan simultáneamente con el mismo reloj | Testbenches individuales e integrados | Arquitectura modular y separación de responsabilidades |
+| Depuración hardware/software | Un fallo podía originarse en FPGA, Python, UART o conexión | Pruebas por subsistema | Verificación progresiva antes de integrar |
 
 ## 12. Conclusiones
 
