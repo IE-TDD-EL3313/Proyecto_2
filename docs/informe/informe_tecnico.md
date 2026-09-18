@@ -1244,13 +1244,13 @@ t = 4 ms → dígito 0
 Por lo tanto, un ciclo completo de refresco de los cuatro dígitos requiere aproximadamente:
 
 $$
-$T_{\text{refresh}}=4\mathrm{ms}$
+T_{\text{refresh}}=4\mathrm{ms}
 $$
 
 y la frecuencia de refresco completa es:
 
 $$
-f_{\text{refresh}}=\frac{1}{4\,\mathrm{ms}}=250\,\mathrm{Hz}
+f_{\text{refresh}}=\frac{1}{4\,\mathrm{ms}}=250\mathrm{Hz}
 $$
 
 Cada dígito se actualiza aproximadamente **250 veces por segundo**, proporcionando una visualización estable para el usuario.
