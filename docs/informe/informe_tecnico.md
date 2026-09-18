@@ -3531,9 +3531,6 @@ las evidencias pendientes del montaje.
 
 #### Fotografía del sistema completo
 
-**Evidencia pendiente:** fotografía del sistema completo implementado sobre la
-Basys 3, incluyendo el LCD, displays, LED, buzzer y conexión UART a la PC. Esta
-fotografía es necesaria para cerrar la validación física exigida por la rúbrica.
 
 ### 10.3 Síntesis, implementación y utilización de recursos
 
@@ -3765,8 +3762,3 @@ Durante el desarrollo del proyecto se presentaron diversos retos asociados princ
    del consumo y fotografías del funcionamiento integral.
 
 ---
-
-## Anexos (opcional)
-
-Las formas de onda y reportes completos utilizados como evidencia se conservan
-en `docs/informe/fig/` dentro del repositorio del proyecto.
