@@ -3501,35 +3501,48 @@ cero.
 
 #### Pantalla de selección de modo
 
-El comportamiento de selección quedó verificado por simulación (Figura 6). La
-fotografía del menú fácil/difícil en el LCD debe incorporarse con la validación
-final sobre la tarjeta.
+La Figura correspondiente al inicio de partida muestra la interfaz física del sistema
+una vez seleccionada la dificultad desde la FPGA. En esta etapa, el LCD presenta la
+información inicial del juego, mientras que los displays de siete segmentos y los
+demás indicadores reflejan el estado activo de la partida.
 
-#### Partida en curso
-
-La evidencia fotográfica del LCD con una palabra parcialmente revelada y del
-tiempo en los displays de siete segmentos queda pendiente de la validación
-final del montaje.
-
-#### Victoria y derrota
-
-Las transiciones de victoria y derrota se verificaron en las Figuras 8 a 10. Se
-debe añadir una fotografía del mensaje final mostrado por el LCD y del contador
-de victorias en los displays.
+![Inicio de una partida](fig/inicio_partida.jpeg)
 
 #### Comunicación con la aplicación de PC
 
-La interfaz UART se verificó en simulación; queda pendiente incorporar una
-captura de la aplicación Python durante una partida física.
+La comunicación entre la FPGA y la aplicación desarrollada en Python se verificó de
+forma satisfactoria mediante la interfaz UART. La terminal muestra la recepción de
+datos enviados por la FPGA y la interacción del usuario al ingresar letras durante la
+ejecución del juego.
 
-#### Indicadores locales
+![Terminal de Python](fig/terminal_python.png)
 
-Los LED indican menú, partida, resultado y dificultad seleccionada. El buzzer
-se activa ante eventos de letra y al finalizar la partida, como se observa en
-las Figuras 7 a 10. La caracterización física del sonido queda incluida entre
-las evidencias pendientes del montaje.
+#### Resultado de victoria
+
+Cuando el usuario completa correctamente la palabra antes de agotar el tiempo o los
+intentos, el sistema entra en estado de victoria. En esta condición, el LCD muestra
+el mensaje correspondiente, el contador de victorias se actualiza y el buzzer genera
+el patrón de confirmación asociado al evento de éxito.
+
+![Resultado de victoria](fig/victoria.jpeg)
+
+#### Resultado de derrota
+
+Si el usuario agota los intentos permitidos o se termina el tiempo de juego, el
+sistema pasa al estado de derrota. En este caso, el LCD presenta el mensaje de
+pérdida y revela la palabra correcta, permitiendo al usuario identificar cuál era la
+solución esperada.
+
+![Resultado de derrota](fig/derrota.jpeg)
 
 #### Fotografía del sistema completo
+
+La implementación final integra la FPGA Basys3, el LCD PmodCLP, la interfaz UART con
+la PC, los displays de siete segmentos y el sistema de alerta sonora. La siguiente
+imagen muestra el montaje físico completo utilizado para validar el funcionamiento
+general del proyecto.
+
+![Sistema completo implementado](fig/circuito_completo.jpeg)
 
 
 ### 10.3 Síntesis, implementación y utilización de recursos
