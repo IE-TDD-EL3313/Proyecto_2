@@ -1,34 +1,8 @@
 # Informe técnico: Ahorcado — juego electrónico FPGA / PC por enlace serial
 
-<!--
-PLANTILLA — Proyecto 2
-
-Esta plantilla sigue las categorías de la rúbrica "Documentación técnica (informe)":
-  - Fundamentación teórica ........................ 20%
-  - Presentación de resultados ..................... 30%
-  - Análisis e interpretación de resultados ........ 25%
-  - Conclusiones y aprendizaje obtenido ............ 15%
-  - Calidad y organización del documento ........... 10%
-
-Reglas de formato que deben respetarse en TODO el documento:
-  - Un único nivel de encabezado por jerarquía: ## para secciones principales,
-    ### para subsecciones, #### para sub-subsecciones (p. ej. "Entradas",
-    "Salidas", "Funcionamiento" y "Relación con el sistema" dentro de cada
-    módulo). No usar "##" para estos últimos: rompe la estructura del
-    documento y afecta "Calidad y organización".
-  - Cada figura, tabla o forma de onda debe llevar numeración y una leyenda
-    explicando qué muestra y qué se debe observar en ella.
-  - La sección de resultados (10) debe ser explícita e independiente del
-    análisis: aquí se presentan datos, capturas y mediciones; la
-    interpretación crítica va en la sección 11.
-  - Los tres integrantes escriben en este mismo archivo. Las marcas
-    [INTEGRANTE 1/2/3] indican responsable según DISTRIBUCION_DOCUMENTACION_
-    PROYECTO_2.txt y deben eliminarse antes de la entrega final.
--->
-
 ## Resumen
 
-Este informe presenta el diseño e implementación de un juego electrónico de Ahorcado en el cual una FPGA Basys 3 concentra la totalidad del control de la partida y una aplicación de computadora personal, desarrollada en Python, actúa como terminal remota del jugador mediante un enlace serial UART a 115200 baudios. El sistema, integrado en el módulo superior `hangman_top`, está compuesto por un módulo de control `game_core` que implementa la máquina de estados `MENU → GAME → RESULT → MENU`, selecciona la palabra secreta mediante un generador pseudoaleatorio LFSR de 8 bits y consulta un banco de 50 palabras (`word_bank`) descrito como una memoria de solo lectura combinacional; un bloque `uart_game_interface` que encapsula un núcleo `uart_peripheral` y define un protocolo de aplicación propio basado en tramas con encabezado `0xA5` para notificar el inicio de partida, el resultado de cada letra y el resultado final; y los periféricos de visualización y retroalimentación local: `lcd_screen_controller`/`lcd_peripheral` para el LCD PmodCLP (HD44780), e `io_controller` para los displays de siete segmentos, el LED de estado y el buzzer. Las simulaciones unitarias e integradas del sistema, así como los procesos de síntesis, implementación y análisis de timing, se completaron satisfactoriamente, y el sistema demostró jugabilidad completa sobre la tarjeta Basys 3: selección de dificultad, recepción y validación de letras, actualización del LCD y de los displays, control del tiempo y de los intentos, y comunicación bidireccional con la aplicación de PC. Como trabajo pendiente queda principalmente la optimización del diseño y la incorporación de patrones sonoros diferenciados en el buzzer para distinguir con mayor claridad entre acierto, error, victoria y derrota.
+Este informe presenta el diseño e implementación de un juego electrónico de Ahorcado en el cual una FPGA Basys 3 concentra la totalidad del control de la partida y una aplicación de computadora personal, desarrollada en Python, actúa como terminal remota del jugador mediante un enlace serial UART a 115200 baudios. El sistema final, integrado en `hangman_top_completo`, incluye acondicionamiento de botones y selección confirmada de dificultad; un módulo `game_core` que implementa la máquina de estados `MENU → GAME → RESULT → MENU`, selecciona la palabra secreta mediante un LFSR de 8 bits y consulta un banco de 50 palabras; un bloque `uart_game_interface` que encapsula `uart_peripheral` y transmite tramas con encabezado `0xA5`; y periféricos para LCD, displays de siete segmentos, LED y buzzer. El testbench integrado completó 753 comprobaciones sin errores. La implementación utilizó 1195 LUT (5.75 %), 1122 flip-flops (2.70 %) y 34 IOB (32.08 %), y cumplió la restricción de 100 MHz con WNS de 0.730 ns y WHS de 0.104 ns. Como trabajo pendiente para cerrar la documentación queda incorporar fotografías del montaje y capturas de la aplicación de PC durante una prueba física completa.
 ---
 
 ## 1. Introducción
@@ -41,7 +15,7 @@ El proyecto se implementó sobre una tarjeta **Basys 3**, utilizando como perif�
 
 ### 1.2 Solución desarrollada
 
-La solución desarrollada concentra toda la inteligencia y el control de la partida dentro de la FPGA, en el módulo superior `hangman_top`. Este módulo instancia y conecta los siguientes bloques:
+La solución desarrollada concentra toda la inteligencia y el control de la partida dentro de la FPGA, en el módulo superior `hangman_top_completo`. Este módulo acondiciona los botones de selección y confirmación e instancia los siguientes bloques:
  
 - `game_core`: máquina de estados y *datapath* principal del juego. Selecciona la palabra secreta mediante un generador pseudoaleatorio LFSR de 8 bits interno, consulta el banco de palabras (`word_bank`), valida cada letra recibida, controla el tiempo restante y los intentos fallidos, y determina el resultado de la partida.
 - `word_bank`: memoria de solo lectura combinacional con 50 palabras de longitud fija de 12 caracteres (rellenadas con espacios), junto con su longitud real, indexada de 0 a 49.
@@ -56,8 +30,8 @@ El alcance logrado corresponde a un juego de Ahorcado completamente funcional y 
  
 Dentro de las decisiones de diseño que se apartan del planteamiento inicial (`docs/diseño/diseño.md`) y que deben quedar documentadas como tales, en lugar de considerarse errores, están las siguientes:
  
-- **Selección de modo simplificada.** El planteamiento original proponía un botón `BTN_SEL` para alternar cíclicamente entre `FACIL` y `DIFICIL`, confirmado con un botón `BTN_OK` independiente. La implementación final simplifica esta interacción utilizando `btnU` para iniciar directamente en modo fácil y `btnD` para iniciar directamente en modo difícil, detectados por flanco de subida dentro de `game_core`. Esta simplificación reduce la cantidad de pasos que debe realizar el jugador sin afectar la funcionalidad exigida.
-- **Antirrebote de botones integrado en `game_core`.** En `hangman_top`, los pulsadores `btnC`, `btnU` y `btnD` se conectan directamente al módulo de control (como `rst`, `btn_easy` y `btn_hard`) sin pasar por un módulo dedicado de sincronización/antirrebote. Dentro de `game_core`, las señales `btn_easy_d`/`btn_hard_d` (un registro de un ciclo de retardo) se utilizan únicamente para detectar el flanco de subida de cada botón y generar un pulso de un solo ciclo; esto evita que una pulsación sostenida se interprete como múltiples eventos, pero no constituye un filtro antirrebote temporizado (de varios milisegundos) como el implementado en el Proyecto 1. En la práctica, el rebote mecánico no generó fallas perceptibles durante las pruebas, pero se documenta como una limitación de robustez del diseño.
+- **Selección de modo confirmada.** `btnU` funciona como `BTN_SEL` y alterna entre fácil y difícil únicamente durante `MENU`; `btnD` funciona como `BTN_OK` y genera `start_easy` o `start_hard` según el valor almacenado en `selected_mode`. De esta manera, la dificultad se puede revisar en el LCD antes de iniciar.
+- **Acondicionamiento local de botones.** `hangman_top_completo` instancia dos bloques `button_conditioner`. Cada bloque utiliza dos flip-flops de sincronización y exige 20 ms de estabilidad antes de actualizar su salida. La detección posterior de flanco produce `sel_pulse` y `ok_pulse` de un ciclo. `btnC` se mantiene como reinicio general síncrono.
 - **LFSR interno, no modular.** El generador pseudoaleatorio no se implementó como un módulo independiente, según sugería el diagrama de tercer nivel del planteamiento, sino como un registro de 8 bits interno a `game_core`, con semilla fija (`8'h1`) cargada en cada reset. Esto significa que, tras cada reset general, la secuencia de palabras generada es siempre la misma para una misma serie de pulsaciones, aunque durante una sesión de juego continua el valor del LFSR sigue evolucionando de forma pseudoaleatoria en cada ciclo en que el sistema permanece en `MENU`.
 - **Cobertura de longitudes del banco de palabras.** El banco de palabras cubre longitudes de 4 a 11 caracteres (no hasta 12), lo cual cumple igualmente el rango de 4 a 12 exigido por el enunciado, aunque no lo agota en su extremo superior.
 Como limitaciones y oportunidades de mejora identificadas al cierre del proyecto se señalan:
@@ -111,11 +85,11 @@ Diseñar e implementar un juego electrónico de Ahorcado en el cual una FPGA Bas
 | Contador de victorias | 00–99 | Saturado con reinicio a 0 al superar 99 (`victories == 99 ? 0 : victories+1`) |
 | Baudios UART | 115200 | `BAUD_RATE = 115200` en `uart_peripheral`/`uart_game_interface` |
 | Reloj de la FPGA | 100 MHz | `CLK100MHZ`, único reloj de entrada del sistema |
-| Displays de 7 segmentos | ≥ 4 dígitos | 4 dígitos multiplexados en `io_controller` (`seg`, `an`, `dp`) — [verificar asignación exacta 2+2] |
+| Displays de 7 segmentos | ≥ 4 dígitos | 4 dígitos multiplexados: dos para tiempo y dos para victorias |
 | LED de estado | mínimo 1 LED, estados distinguibles | 4 LED: `led[0]` menú, `led[1]` partida, `led[2]` resultado, `led[3]` modo difícil |
-| Buzzer | 3 patrones distintos | Generado en `io_controller` a partir de `letter_correct`, `letter_wrong`, `result_active`/`result_win` — [verificar patrones exactos] |
-| Botón de reinicio general | Botón central | `btnC`, conectado como `rst` a todos los módulos de `hangman_top` |
-| Selección de modo | Botones dedicados | `btnU` = fácil (`btn_easy`), `btnD` = difícil (`btn_hard`), detectados por flanco de subida dentro de `game_core` |
+| Buzzer | 3 patrones distintos | 1 beep para acierto, 2 para error, 3 para victoria y uno prolongado para derrota |
+| Botón de reinicio general | Botón central | `btnC`, conectado como `rst` a los módulos de `hangman_top_completo` |
+| Selección de modo | Botones dedicados | `btnU` alterna el modo y `btnD` confirma; ambos se sincronizan y filtran durante 20 ms |
 | Comunicación requerida | UART asíncrono | Enlace bidireccional `RsRx`/`RsTx` mediante `uart_peripheral`, encapsulado por `uart_game_interface` |
 
 ### 3.2 Protocolo de aplicación sobre UART
@@ -1146,7 +1120,14 @@ El mismo principio de sincronización puede aplicarse a otras entradas externas 
 
 El rebote mecánico ocurre porque, al presionar o soltar un pulsador físico, el contacto no cambia de estado de forma limpia, sino que oscila brevemente entre 0 y 1 durante algunos milisegundos antes de estabilizarse. Una técnica de antirrebote completa (como la usada en el Proyecto 1) muestrea la entrada periódicamente y solo acepta el nuevo valor cuando se ha mantenido estable durante una ventana de tiempo suficiente, generando además un pulso de un solo ciclo para cada pulsación válida.
  
-En este proyecto, `btnC`, `btnU` y `btnD` se conectan directamente desde `hangman_top` hacia `game_core` como `rst`, `btn_easy` y `btn_hard`, respectivamente, sin pasar por un módulo antirrebote dedicado. Dentro de `game_core`, únicamente se implementa **detección de flanco de subida**: los registros `btn_easy_d` y `btn_hard_d` retrasan la señal un ciclo de reloj, y las señales combinacionales `easy_pulse = btn_easy & ~btn_easy_d` y `hard_pulse = btn_hard & ~btn_hard_d` generan un pulso de un ciclo en la transición de 0 a 1. Esto evita que una pulsación sostenida sea interpretada como múltiples eventos consecutivos mientras el botón permanece presionado, pero **no filtra el rebote mecánico real** de los primeros milisegundos de la pulsación: si el rebote ocurriera dentro de esa ventana, en principio podría generar más de un pulso espurio. En la práctica, esto no se observó como una falla evidente durante las pruebas físicas, pero se documenta como una simplificación respecto al antirrebote temporizado del Proyecto 1 (ver sección 1.3).
+En el top final, `btnU` y `btnD` pasan por instancias independientes de
+`button_conditioner`. Cada instancia utiliza dos flip-flops para sincronizar la
+entrada y un contador que exige estabilidad durante 20 ms antes de modificar
+`level_o`. Después, el top compara el nivel filtrado con su valor anterior para
+generar `sel_pulse` y `ok_pulse` de un solo ciclo. Esta combinación atiende los
+dos problemas distintos: la sincronización reduce el riesgo de metaestabilidad
+y la ventana temporal elimina el rebote mecánico. `btnC` actúa como reinicio
+general del acondicionamiento y de los demás subsistemas.
 
 ### 4.9 Multiplexación de displays de siete segmentos
 
@@ -1276,11 +1257,11 @@ La multiplexación permite controlar los cuatro displays utilizando un único co
 
 ### 5.1 Diseño modular
 
-El proyecto se desarrolló siguiendo la metodología de diseño modular planteada en `docs/diseño/diseño.md`, dividiendo el sistema en niveles de abstracción sucesivos: un primer nivel que define las entradas y salidas externas del sistema completo (`hangman_top`), un segundo nivel que separa los bloques funcionales principales (gestión de entradas, comunicación con la PC, gestión de palabras, control del juego, visualización y alertas), y niveles posteriores que detallan internamente cada bloque hasta llegar a unidades describibles directamente en SystemVerilog. Dentro del bloque de control se mantuvo, en la medida de lo posible, una separación conceptual entre la máquina de estados (FSM) y el *datapath* (registros de la partida), de forma que la FSM decide "cuándo" ocurre cada transición y el *datapath* administra "qué" datos se actualizan en cada una.
+El proyecto se desarrolló siguiendo la metodología de diseño modular planteada en `docs/diseño/diseño.md`, dividiendo el sistema en niveles de abstracción sucesivos: un primer nivel que define las entradas y salidas externas del sistema completo (`hangman_top_completo`), un segundo nivel que separa los bloques funcionales principales (gestión de entradas, comunicación con la PC, gestión de palabras, control del juego, visualización y alertas), y niveles posteriores que detallan internamente cada bloque hasta llegar a unidades describibles directamente en SystemVerilog. Dentro del bloque de control se mantuvo, en la medida de lo posible, una separación conceptual entre la máquina de estados (FSM) y el *datapath* (registros de la partida), de forma que la FSM decide "cuándo" ocurre cada transición y el *datapath* administra "qué" datos se actualizan en cada una.
 
 ### 5.2 Flujo de desarrollo
 
-El desarrollo se realizó siguiendo, en términos generales, el orden planteado en el plan de implementación del diseño: primero los bloques de entrada (lectura de botones) y el núcleo de comunicación (`uart_peripheral`); luego el banco de palabras (`word_bank`) y el generador pseudoaleatorio LFSR; a continuación la máquina de estados y el *datapath* principal del juego (`game_core`); posteriormente el periférico y el controlador de pantallas del LCD (`lcd_peripheral`, `lcd_screen_controller`); después los indicadores locales (displays de siete segmentos, LED y buzzer) agrupados en `io_controller`; y finalmente la aplicación de PC en Python (`juego_uart.py`). Cada módulo se verificó de forma individual antes de integrarse en `hangman_top`, y la integración completa se validó tanto en simulación como en la tarjeta física.
+El desarrollo se realizó siguiendo, en términos generales, el orden planteado en el plan de implementación del diseño: primero los bloques de entrada (lectura de botones) y el núcleo de comunicación (`uart_peripheral`); luego el banco de palabras (`word_bank`) y el generador pseudoaleatorio LFSR; a continuación la máquina de estados y el *datapath* principal del juego (`game_core`); posteriormente el periférico y el controlador de pantallas del LCD (`lcd_peripheral`, `lcd_screen_controller_completo`); después los indicadores locales (displays de siete segmentos, LED y buzzer) agrupados en `io_controller`; y finalmente la aplicación de PC en Python (`juego_uart.py`). Cada módulo se verificó de forma individual antes de integrarse en `hangman_top_completo`, y la integración completa se validó con el testbench final y los reportes de implementación.
 
 
 ### 5.3 Herramientas
@@ -1296,43 +1277,44 @@ El desarrollo se realizó siguiendo, en términos generales, el orden planteado 
 
 ### 6.1 Jerarquía de módulos
 
-El árbol de módulos real, tomado directamente del código fuente (`hangman_top.sv`), es el siguiente:
+El árbol de módulos del top final es el siguiente:
  
 ```text
-hangman_top
+hangman_top_completo
+  button_conditioner (BTN_SEL)
+  button_conditioner (BTN_OK)
   game_core
     word_bank
   uart_game_interface
     uart_peripheral
-  lcd_screen_controller
+  lcd_screen_controller_completo
   lcd_peripheral
   io_controller
 ```
- 
-A diferencia del árbol propuesto en el planteamiento del diseño, no existe un módulo `button_conditioner` independiente: los pulsadores `btnC`, `btnU` y `btnD` se conectan directamente desde `hangman_top` hacia `game_core`, que internamente realiza únicamente la detección de flanco descrita en la sección 4.8. De igual forma, `uart_peripheral` no es instanciado directamente por `hangman_top`, sino encapsulado dentro de `uart_game_interface`, que es el módulo que efectivamente se conecta al top-level.
+
+`uart_peripheral` no es instanciado directamente por el top, sino encapsulado
+dentro de `uart_game_interface`. De forma equivalente, el controlador de
+pantallas escribe al bus de registros de `lcd_peripheral`, que es el bloque que
+maneja las señales físicas del LCD.
 
 ### 6.2 Diagrama de bloques
 
-El diagrama de primer nivel presenta el sistema completo `hangman_top` como una única caja negra, mostrando únicamente sus entradas (reloj, botones, entrada UART) y salidas (salida UART, LCD, displays de siete segmentos, LED de estado, buzzer) hacia el exterior.
+El diagrama de primer nivel presenta el sistema completo `hangman_top_completo` como una única caja negra, mostrando únicamente sus entradas (reloj, botones, entrada UART) y salidas (salida UART, LCD, displays de siete segmentos, LED de estado, buzzer) hacia el exterior.
 
 ![Diagrama de primer nivel del sistema](fig/Primer_Nivel.png)
 
-**Figura 1.** Diagrama de primer nivel de `hangman_top`: interfaces externas del sistema completo.
+**Figura 1.** Diagrama de primer nivel de `hangman_top_completo`: interfaces externas del sistema completo.
 
 El diagrama de segundo nivel descompone ese bloque único en los subsistemas funcionales que efectivamente se implementaron: `game_core` (control y datapath del juego), `word_bank` (banco de palabras), `uart_game_interface` (comunicación con la PC), `lcd_screen_controller`/`lcd_peripheral` (control del LCD) e `io_controller` (displays, LED y buzzer), junto con sus interconexiones principales.
 
 ![Diagrama de segundo nivel del sistema](fig/Segundo_Nivel.png)
 
-**Figura 2.** Diagrama de segundo nivel de `hangman_top`: subsistemas funcionales principales y sus interconexiones.
+**Figura 2.** Diagrama de segundo nivel de `hangman_top_completo`: subsistemas funcionales principales y sus interconexiones.
 
 ### 6.3 Flujo de una partida
 
-<!-- [INTEGRANTE 1] Diagrama de flujo o descripción textual: selección de
-modo → selección de palabra → recepción de letra → validación → repetición
-→ fin de partida → regreso al menú. -->
-
 1. El sistema inicia (o retorna tras un reset) en el estado `MENU`, mientras el LFSR interno de `game_core` avanza continuamente en cada ciclo de reloj.
-2. El jugador presiona `btnU` (modo fácil) o `btnD` (modo difícil). Se detecta el flanco de subida correspondiente y se calcula el índice candidato de palabra (`easy_index` o `hard_index`), ajustado si coincide con la última palabra usada.
+2. El jugador usa `btnU` para alternar la dificultad mostrada y `btnD` para confirmarla. Los botones acondicionados generan un único pulso y el top entrega `start_easy` o `start_hard` a `game_core`. Se calcula el índice candidato de palabra (`easy_index` o `hard_index`), ajustado si coincide con la última palabra usada.
 3. `word_bank` entrega la palabra y su longitud real; `game_core` las almacena en `selected_word`/`word_length`, reinicia `revealed_mask`, `used_letters` y `wrong_count`, carga el tiempo correspondiente al modo (`EASY_TIME` o `HARD_TIME`) y transita a `GAME`.
 4. `lcd_screen_controller` actualiza el LCD para mostrar la palabra oculta y el número de intentos disponibles; `io_controller` inicia la cuenta regresiva en los displays de siete segmentos.
 5. La PC transmite una letra por UART; `uart_game_interface` la recibe, la valida como carácter A–Z y la entrega a `game_core` mediante `letter`/`letter_valid`.
@@ -1358,12 +1340,7 @@ Cabe aclarar que este diagrama corresponde al planteamiento original y no reflej
 
 ## 7. Subsistema FPGA
 
-<!-- [INTEGRANTE 1 para game_core/word_bank; INTEGRANTE 2 para UART y LCD]
-Un apartado por módulo, todos con el MISMO nivel de encabezado para las
-subsecciones internas (####), para no repetir el error de estructura del
-informe anterior. -->
-
-### 7.1 `hangman_top`
+### 7.1 `hangman_top_completo`
 
 #### Entradas y salidas
 
@@ -1371,8 +1348,8 @@ informe anterior. -->
 |---|---|---|
 | `CLK100MHZ` | Entrada | Reloj principal del sistema, 100 MHz. |
 | `btnC` | Entrada | Botón central; reinicio general (`rst`) de todos los módulos. |
-| `btnU` | Entrada | Botón superior; inicia una partida en modo fácil. |
-| `btnD` | Entrada | Botón inferior; inicia una partida en modo difícil. |
+| `btnU` | Entrada | `BTN_SEL`; alterna la dificultad durante `MENU`. |
+| `btnD` | Entrada | `BTN_OK`; confirma la dificultad e inicia la partida. |
 | `RsRx` | Entrada | Entrada serial UART proveniente de la PC. |
 | `RsTx` | Salida | Salida serial UART hacia la PC. |
 | `lcd_rs`, `lcd_rw`, `lcd_e`, `lcd_data[7:0]` | Salidas | Interfaz paralela hacia el LCD PmodCLP (HD44780). |
@@ -1382,33 +1359,36 @@ informe anterior. -->
  
 #### Funcionamiento
  
-`hangman_top` no contiene lógica propia más allá de la interconexión de módulos y de la asignación directa del LED de estado. Instancia `game_core`, `uart_game_interface`, `lcd_screen_controller`, `lcd_peripheral` e `io_controller`, conectando entre ellos las señales de estado del juego (`hard_mode`, `menu_active`, `game_active`, `result_active`, `result_win`), los datos de la partida (`selected_word`, `word_length`, `revealed_mask`, `wrong_count`, `time_left`, `victories`) y las señales de resultado de la última letra procesada (`letter_processed`, `letter_correct`, `letter_wrong`, `letter_repeated`). El reloj y el reset (`btnC`) se distribuyen sin modificación a todos los módulos internos, por lo que el sistema opera enteramente dentro de un único dominio de reloj de 100 MHz. Los cuatro LED de estado se asignan de forma combinacional: `led[0] = menu_active`, `led[1] = game_active`, `led[2] = result_active`, `led[3] = hard_mode`.
+`hangman_top_completo` interconecta los subsistemas y también implementa el acondicionamiento de `BTN_SEL`/`BTN_OK`, el registro `selected_mode` y la generación de `start_easy`/`start_hard`. Instancia `game_core`, `uart_game_interface`, `lcd_screen_controller_completo`, `lcd_peripheral` e `io_controller`, conectando estados, palabra, máscara, intentos, tiempo, victorias y resultados de cada letra. Todo opera en un único dominio de 100 MHz. Los LED se asignan como `led[0]=menu_active`, `led[1]=game_active`, `led[2]=result_active`; `led[3]` muestra `selected_mode` en el menú y `hard_mode` durante la partida o el resultado.
  
 #### Relación con el sistema
  
-`hangman_top` actúa como el módulo integrador del proyecto: no implementa reglas del juego, sino que conecta el bloque de control (`game_core`), el bloque de comunicación (`uart_game_interface`) y los bloques de visualización/retroalimentación (`lcd_screen_controller`/`lcd_peripheral`, `io_controller`), constituyendo el punto único de entrada/salida física del sistema hacia la Basys 3.
+`hangman_top_completo` actúa como integrador y adaptador de entradas locales. Las reglas permanecen en `game_core`; el top conecta control, comunicación y visualización con los puertos físicos de la Basys 3.
 
-### 7.2 `Manejo de botones`
-Aunque no existe un módulo `button_conditioner` independiente en la
-implementación final; ver sección 1.3 y 4.8 para la justificación de esta
-desviación respecto al planteamiento original. Esta subsección documenta
-cómo se maneja realmente cada botón.
+### 7.2 `button_conditioner` y manejo de botones
 
 #### Entradas y salidas
 
 | Señal | Dirección | Descripción |
 |---|---|---|
-| `btnC` | Entrada a `hangman_top` | Conectada directamente como `rst` a todos los módulos. |
-| `btnU`, `btnD` | Entrada a `hangman_top` | Conectadas directamente a `game_core` como `btn_easy` y `btn_hard`. |
-| `easy_pulse`, `hard_pulse` | Internas a `game_core` | Pulsos de un ciclo generados por detección de flanco de subida. |
+| `button_i` | Entrada | Señal mecánica asíncrona (`btnU` o `btnD`). |
+| `level_o` | Salida | Nivel sincronizado y estable después del intervalo de antirrebote. |
+| `sel_pulse`, `ok_pulse` | Internas al top | Pulsos de un ciclo generados por flanco ascendente. |
+| `start_easy`, `start_hard` | Internas al top | Confirmación convertida en el inicio de una dificultad específica. |
  
 #### Funcionamiento
  
-`btnC` se utiliza como reset síncrono directo, sin condicionamiento adicional. `btnU` y `btnD` no pasan por un módulo de antirrebote dedicado; dentro de `game_core`, cada señal se retrasa un ciclo de reloj (`btn_easy_d`, `btn_hard_d`) y se compara contra su propio valor actual para generar un pulso de un solo ciclo en el flanco de subida (`easy_pulse = btn_easy & ~btn_easy_d`). Este pulso es el que efectivamente dispara la transición `MENU → GAME` dentro de la FSM de `game_core`.
+Cada acondicionador reduce la probabilidad de metaestabilidad mediante dos
+flip-flops y cambia `level_o` únicamente si la muestra permanece estable por
+`DEBOUNCE_MS=20 ms`. El top registra el nivel anterior para producir pulsos de
+un ciclo. `sel_pulse` alterna `selected_mode` solo en `MENU`; `ok_pulse` se
+combina con ese registro para activar exclusivamente `start_easy` o
+`start_hard`. `btnC` reinicia tanto los acondicionadores como los demás módulos.
  
 #### Relación con el sistema
  
-Estas señales son la única vía de interacción física directa del jugador con el sistema (además del LCD y los displays como salida), y determinan tanto el reinicio general del sistema como el inicio y la dificultad de cada partida.
+Este bloque convierte entradas asíncronas y mecánicas en eventos síncronos
+confiables, evitando selecciones múltiples por rebote o pulsación sostenida.
 
 ### 7.3 `game_core`
 
@@ -1417,7 +1397,7 @@ Estas señales son la única vía de interacción física directa del jugador co
 | Señal | Dirección | Descripción |
 |---|---|---|
 | `clk`, `rst` | Entradas | Reloj de 100 MHz y reset general síncrono. |
-| `btn_easy`, `btn_hard` | Entradas | Señales crudas de `btnU`/`btnD` (ver 7.2). |
+| `btn_easy`, `btn_hard` | Entradas | Pulsos `start_easy`/`start_hard` generados por el top. |
 | `letter[7:0]`, `letter_valid` | Entradas | Letra ASCII recibida desde `uart_game_interface` y su bandera de validez. |
 | `hard_mode` | Salida | Indica si la partida activa/última es en modo difícil. |
 | `menu_active`, `game_active`, `result_active` | Salidas | Indican el estado actual de la FSM (`MENU`, `GAME`, `RESULT`). |
@@ -1431,8 +1411,6 @@ Estas señales son la única vía de interacción física directa del jugador co
 #### Registros principales
  
 Además de las salidas anteriores (registradas internamente), `game_core` mantiene los siguientes registros internos relevantes: `state` (estado de la FSM), `lfsr[7:0]` (generador pseudoaleatorio, sección 4.3), `last_index[5:0]` (índice de la última palabra usada, para evitar repetición inmediata), `used_letters[25:0]` (una bandera por cada letra del alfabeto A–Z ya intentada en la partida actual), `sec_count[31:0]` (contador de ciclos de reloj usado como base de tiempo de un segundo) y `result_secs[2:0]` (segundos transcurridos dentro del estado `RESULT`).
- 
-#### Diagrama de estados
  
 #### Diagrama de estados
 
@@ -3417,45 +3395,30 @@ La siguiente tabla resume la asignación de pines de la Basys 3 definida en el a
 
 ## 10. Presentación de resultados
 
-<!--
-Peso 30% de la rúbrica — la sección más pesada del informe. Debe ser
-EXPLÍCITA, autocontenida y solo describir/mostrar evidencia (sin análisis
-crítico todavía; eso va en la sección 11). Con base en la retroalimentación
-recibida en el Proyecto 1, esta sección DEBE incluir como mínimo:
-  (a) evidencias de simulación (formas de onda, consola de testbench),
-  (b) evidencia física funcional (capturas/fotos de LCD, displays, LED),
-  (c) al menos una fotografía del sistema completo montado en la Basys 3,
-  (d) el reporte de utilización de recursos de la FPGA (LUT, FF, slices,
-      BRAM, DSP, pines de E/S) y el análisis de timing (WNS, TNS, hold slack).
-No basta con mencionar que "la síntesis fue exitosa": los valores deben
-copiarse literalmente del reporte de Vivado.
--->
-
 ### 10.1 Verificación por simulación
 
-<!-- [INTEGRANTE 3] -->
+La verificación final se realizó con `tb_hangman_completo`, que instancia el
+top final y ejercita conjuntamente el acondicionamiento de botones, la FSM del
+juego, el enlace UART, el temporizador y las salidas locales. Para reducir el
+tiempo de simulación se parametrizaron el reloj, el baud rate y las duraciones
+de partida, sin cambiar las transiciones ni las reglas funcionales. El banco de
+pruebas terminó con **753 comprobaciones correctas y cero errores**.
 
-#### Testbenches unitarios
+Durante el desarrollo también se utilizaron bancos de prueba por subsistema.
+La siguiente tabla resume el alcance cubierto y la evidencia consolidada en la
+prueba integrada:
 
-<!-- Tabla o lista: tb_game_core, tb_uart_peripheral, tb_game_uart,
-tb_lcd_peripheral, tb_lcd_screen_controller, tb_io_controller,
-tb_hangman_timing, tb_hangman_completo. Para cada uno: qué verifica y
-resultado (PASS/FAIL). -->
-
-| Testbench | Qué verifica | Resultado |
+| Subsistema verificado | Aspectos comprobados | Resultado final |
 |---|---|---|
-| `tb_game_core` | FSM, letras, errores, victoria, tiempo | |
-| `tb_uart_peripheral` | Registros, RX, TX | |
-| `tb_game_uart` | Integración del juego con UART | |
-| `tb_lcd_peripheral` | Comandos, datos, busy, done | |
-| `tb_lcd_screen_controller` | Pantallas del LCD | |
-| `tb_io_controller` | Siete segmentos y buzzer | |
-| `tb_hangman_timing` | Prueba temporizada del top anterior | |
-| `tb_hangman_completo` | Prueba integrada del top final | |
+| Acondicionamiento de botones | Sincronización, antirrebote y pulso único | PASS |
+| Núcleo del juego | FSM, letras correctas, incorrectas y repetidas | PASS |
+| Temporizador | Cuenta regresiva y derrota al llegar a cero | PASS |
+| UART | Recepción de letras y transmisión de respuestas | PASS |
+| LCD | Generación de escrituras según el estado del juego | PASS |
+| Salidas locales | LED, siete segmentos y buzzer | PASS |
+| Sistema completo | Integración y retorno automático al menú | PASS (753/753) |
 
 #### Resultado del testbench integrado
-
-<!-- Insertar captura de consola con el resultado final, por ejemplo: -->
 
 ```text
 TESTBENCH COMPLETO: PASS (753 comprobaciones)
@@ -3463,169 +3426,301 @@ TESTBENCH COMPLETO: PASS (753 comprobaciones)
 
 ![Consola del testbench integrado](fig/consola_testbench_completo.png)
 
-**Figura 3.** Resultado del testbench integrado `tb_hangman_completo`.
+**Figura 5.** Resultado del testbench integrado `tb_hangman_completo`.
 
 #### Formas de onda relevantes
 
-<!-- Insertar y numerar las formas de onda de: reset, selección de modo,
-confirmación BTN_OK, antirrebote, paquete UART de inicio, carácter
-inválido, letra correcta, letra repetida sin consumir intento, victoria,
-incremento de victorias, seis letras incorrectas, derrota por intentos,
-derrota por tiempo, paquetes UART de letra y resultado. -->
+La Figura 6 muestra el filtrado de los botones y el inicio de partida. Cada
+activación de `btnU` produce un único `sel_pulse`, que alterna
+`selected_mode`; posteriormente `btnD` produce `ok_pulse` y el pulso de inicio
+correspondiente al modo seleccionado. La FSM abandona `MENU` y activa `GAME`.
 
-![Simulación de game_core](Imagenes/tb_game_core.png)
+![Selección de modo, antirrebote e inicio de partida](fig/tb_seleccion_modo.png)
 
-**Figura 4.** Forma de onda de `tb_game_core` mostrando una partida completa.
+**Figura 6.** Selección de dificultad, pulsos acondicionados e inicio de una
+partida en modo difícil.
+
+La Figura 7 confirma el procesamiento UART de letras. El byte `0x41` (`A`)
+genera `letter_valid`, `letter_processed` y `letter_correct`; al repetirlo se
+activa `letter_repeated` sin incrementar `wrong_count`. El byte `0x4C` (`L`)
+revela una nueva posición de la palabra.
+
+![Letra correcta y letra repetida](fig/tb_letra_correcta_repetida.png)
+
+**Figura 7.** Recepción UART y clasificación de una letra correcta y una
+repetida sin penalización.
+
+En la secuencia de victoria (Figura 8), la palabra de nueve caracteres se
+completa con las letras `A`, `L`, `G`, `O`, `R`, `I`, `T` y `M`. La máscara
+avanza hasta `0x1FF`; la letra `O` revela dos posiciones. Al completarse la
+palabra, `game_active` baja, `result_active` y `result_win` suben, y el contador
+de victorias cambia de 0 a 1.
+
+![Secuencia de victoria](fig/tb_victoria.png)
+
+**Figura 8.** Actualización de la máscara, detección de victoria e incremento
+del contador acumulado.
+
+La Figura 9 presenta seis letras incorrectas nuevas. `wrong_count` avanza de 0
+a 6 y la FSM pasa de `GAME` a `RESULT` mientras todavía existe tiempo
+disponible, por lo que la causa de finalización es inequívocamente el límite de
+intentos.
+
+![Derrota por límite de intentos](fig/tb_derrota_intentos.png)
+
+**Figura 9.** Derrota al alcanzar seis errores, con activación del resultado,
+buzzer y transmisión UART final.
+
+Finalmente, la Figura 10 muestra una partida sin errores en la que `time_left`
+cambia de 1 a 0. En ese instante `game_active` baja, `result_active` sube y
+`result_win` permanece en cero. Como `wrong_count` continúa en cero, la derrota
+se atribuye exclusivamente al agotamiento del tiempo.
+
+![Derrota por agotamiento del tiempo](fig/tb_derrota_tiempo.png)
+
+**Figura 10.** Transición a resultado de derrota cuando el temporizador llega a
+cero.
 
 #### Tabla de casos de prueba
 
 | Caso de prueba | Estímulo | Resultado esperado | Resultado obtenido |
 |---|---|---|---|
-| Reset general | `BTN_RST` | Estado `MENU` | |
-| Selección fácil/difícil | `BTN_SEL` | Alterna `selected_mode` | |
-| Confirmación | `BTN_OK` | Inicio de partida | |
-| Letra correcta | ASCII válido en palabra | Revela todas las posiciones | |
-| Letra incorrecta | ASCII válido, no en palabra | `wrong_count++` | |
-| Letra repetida | Letra ya usada | Se ignora, sin penalización | |
-| Sexto error | 6ª letra incorrecta | Derrota por intentos | |
-| Tiempo en cero | `time_left = 0` | Derrota por tiempo | |
-| Palabra completa | Todas las letras reveladas | Victoria, `victories++` | |
-| Carácter inválido | Byte fuera de A–Z | Se descarta sin afectar partida | |
+| Reset general | `BTN_RST` | Estado `MENU` y salidas de juego apagadas | PASS |
+| Selección fácil/difícil | `BTN_SEL` | Alterna `selected_mode` | PASS |
+| Confirmación | `BTN_OK` | Inicia la dificultad seleccionada | PASS |
+| Letra correcta | ASCII válido presente | Revela todas sus posiciones | PASS |
+| Letra incorrecta | ASCII válido ausente | Incrementa `wrong_count` una vez | PASS |
+| Letra repetida | Letra ya utilizada | Se informa y no penaliza | PASS |
+| Sexto error | Sexta letra incorrecta | Derrota por intentos | PASS |
+| Tiempo en cero | `time_left` cambia de 1 a 0 | Derrota por tiempo | PASS |
+| Palabra completa | Todas las posiciones reveladas | Victoria e incremento de `victories` | PASS |
+| Carácter inválido | Byte fuera de `A`–`Z` | Se descarta sin afectar la partida | PASS |
+| Retorno al menú | Expira `RESULT_TIME` | FSM regresa a selección | PASS |
 
 ### 10.2 Resultados físicos y funcionales
 
-<!-- [INTEGRANTE 3, con apoyo de INTEGRANTE 1 y 2 según el módulo] -->
-
 #### Pantalla de selección de modo
 
-![Menú fácil y difícil en LCD](fig/lcd_menu.jpg)
-
-**Figura 5.** Pantalla de selección de modo mostrando fácil/difícil en el LCD.
+El comportamiento de selección quedó verificado por simulación (Figura 6). La
+fotografía del menú fácil/difícil en el LCD debe incorporarse con la validación
+final sobre la tarjeta.
 
 #### Partida en curso
 
-![Palabra oculta y letras reveladas](fig/lcd_partida.jpg)
-
-**Figura 6.** LCD mostrando la palabra parcialmente revelada, los intentos
-restantes y el tiempo en los displays de siete segmentos.
+La evidencia fotográfica del LCD con una palabra parcialmente revelada y del
+tiempo en los displays de siete segmentos queda pendiente de la validación
+final del montaje.
 
 #### Victoria y derrota
 
-![Resultado final en LCD](fig/lcd_resultado.jpg)
-
-**Figura 7.** Pantalla de resultado final (victoria / derrota) y contador
-acumulado de victorias en los displays.
+Las transiciones de victoria y derrota se verificaron en las Figuras 8 a 10. Se
+debe añadir una fotografía del mensaje final mostrado por el LCD y del contador
+de victorias en los displays.
 
 #### Comunicación con la aplicación de PC
 
-![Terminal Python durante una partida](fig/python_terminal.png)
-
-**Figura 8.** Consola de la aplicación de Python mostrando el envío de
-letras y la recepción del estado de la partida.
+La interfaz UART se verificó en simulación; queda pendiente incorporar una
+captura de la aplicación Python durante una partida física.
 
 #### Indicadores locales
 
-<!-- LED de estado (menú/partida/resultado/dificultad) y buzzer. Puede
-describirse el patrón sonoro medido con osciloscopio si se dispone de esa
-evidencia. -->
+Los LED indican menú, partida, resultado y dificultad seleccionada. El buzzer
+se activa ante eventos de letra y al finalizar la partida, como se observa en
+las Figuras 7 a 10. La caracterización física del sonido queda incluida entre
+las evidencias pendientes del montaje.
 
 #### Fotografía del sistema completo
 
-<!-- OBLIGATORIO: fotografía del montaje físico completo en la Basys 3,
-mostrando LCD, displays encendidos, LED y conexión al buzzer/PC. -->
-
-![Sistema completo montado en la Basys 3](figfoto_sistema_fpga.jpg)
-
-**Figura 9.** Sistema completo implementado sobre la tarjeta Basys 3,
-incluyendo el módulo LCD PmodCLP, displays de siete segmentos y conexión
-UART a la computadora.
+**Evidencia pendiente:** fotografía del sistema completo implementado sobre la
+Basys 3, incluyendo el LCD, displays, LED, buzzer y conexión UART a la PC. Esta
+fotografía es necesaria para cerrar la validación física exigida por la rúbrica.
 
 ### 10.3 Síntesis, implementación y utilización de recursos
 
-<!-- [INTEGRANTE 3] Regenerar todos los reportes usando el top final
-`hangman_top_completo`. -->
-
 #### Resumen de utilización de recursos
-
-<!-- Copiar literalmente del "Utilization Report" de Vivado. -->
 
 | Recurso | Utilizado | Disponible | % Utilización |
 |---|---:|---:|---:|
-| Slice LUTs | | | |
-| Slice Registers (FF) | | | |
-| Slices | | | |
-| Block RAM (BRAM) | | | |
-| DSP | | | |
-| Pines de E/S (IO) | | | |
+| Slice LUTs | 1195 | 20800 | 5.75 % |
+| Slice Registers (FF) | 1122 | 41600 | 2.70 % |
+| F7 Muxes | 17 | 16300 | 0.10 % |
+| F8 Muxes | 2 | 8150 | 0.02 % |
+| Block RAM (BRAM) | 0 | 50 | 0.00 % |
+| DSP | 0 | 90 | 0.00 % |
+| Pines de E/S (IO) | 34 | 106 | 32.08 % |
+| BUFGCTRL | 1 | 32 | 3.13 % |
+
+![Resumen de utilización posterior a implementación](fig/utilizacion_final_implementacion.png)
+
+**Figura 11.** Utilización final de LUT, flip-flops y terminales de E/S.
+
+![Utilización de lógica posterior a síntesis](fig/utilizacion_sintesis_logica.png)
+
+**Figura 12.** Detalle de LUT, registros y multiplexores utilizados después de
+la síntesis.
+
+![Utilización de memoria y DSP](fig/utilizacion_sintesis_memoria_dsp.png)
+
+**Figura 13.** El diseño no requiere bloques RAM ni unidades DSP dedicadas.
+
+![Utilización de entradas, salidas y reloj](fig/utilizacion_sintesis_io_reloj.png)
+
+**Figura 14.** Utilización de IOB y recursos de distribución global del reloj.
 
 #### Análisis de timing
 
-<!-- Copiar literalmente del "Timing Summary" de Vivado. -->
-
 ```text
-WNS = ___ ns
-TNS = ___ ns
-WHS (hold slack) = ___ ns
+WNS  = 0.730 ns
+TNS  = 0.000 ns
+WHS  = 0.104 ns
+THS  = 0.000 ns
+Endpoints con fallo de setup = 0
+Endpoints con fallo de hold  = 0
 ```
 
-<!-- Confirmar explícitamente si se cumple el timing a 100 MHz (WNS ≥ 0 y
-TNS = 0) y adjuntar la captura del reporte. -->
+El diseño cumple temporización a 100 MHz: las holguras de setup y hold son
+positivas, las sumas de holgura negativa son cero y no existen endpoints
+fallidos entre los 2153 analizados.
 
-![Reporte de timing de Vivado](fig/timing_summary.png)
+![Reporte de timing de Vivado](fig/temporizacion_implementacion.png)
 
-**Figura 10.** Resumen de timing post-implementación para `hangman_top_completo`.
+**Figura 15.** Resumen de timing post-implementación para
+`hangman_top_completo`.
+
+![Resumen del reloj principal](fig/resumen_reloj_100mhz.png)
+
+**Figura 16.** Reloj `sys_clk_pin` de 100 MHz, con periodo de 10 ns y ciclo de
+trabajo del 50 %.
 
 #### Evidencia de síntesis e implementación
 
-![RTL elaborado](fig/rtl_elaborado.png)
+![Distribución física de terminales](fig/distribucion_pines_fpga.png)
 
-**Figura 11.** Esquemático RTL elaborado de `hangman_top_completo`.
+**Figura 17.** Vista del dispositivo implementado. Los IOB utilizados aparecen
+resaltados en los bancos laterales del FPGA.
 
-![Diseño implementado en el dispositivo](fig/device_implementado.png)
+![DRC sin violaciones](fig/drc_sin_violaciones.png)
 
-**Figura 12.** Vista del diseño implementado sobre el dispositivo FPGA
-(Device view de Vivado).
+**Figura 18.** Comprobación final de reglas de diseño sin violaciones.
+
+La estimación posterior a implementación fue de 0.089 W de potencia interna:
+0.017 W dinámicos y 0.072 W estáticos. La temperatura de unión estimada fue
+25.4 °C, con margen térmico de 59.6 °C. El nivel de confianza del reporte es
+`Low`, porque se utilizó actividad de conmutación estimada y no un archivo
+SAIF/VCD; tampoco se incluye el consumo de los periféricos externos.
+
+![Estimación de potencia](fig/estimacion_potencia.png)
+
+**Figura 19.** Estimación de potencia y temperatura posterior a implementación.
 
 #### FPGA y frecuencia de reloj
 
-<!-- Especificar el modelo exacto de FPGA de la Basys 3 y confirmar que
-el sistema opera con el único reloj de entrada de 100 MHz. -->
+La implementación se realizó para el FPGA Artix-7 `XC7A35TCPG236-1` de la
+Basys 3. Todo el diseño utiliza un único dominio de reloj de 100 MHz; las bases
+de tiempo más lentas se generan mediante contadores y señales de habilitación,
+sin crear relojes derivados adicionales.
 
 ---
 
 ## 11. Análisis e interpretación de resultados
 
-<!--
-Peso 25% de la rúbrica. Aquí sí corresponde comparar valores teóricos,
-simulados y experimentales, e identificar causas de diferencias o errores.
-No repetir datos ya mostrados en la sección 10: referenciarlos por número
-de figura/tabla y discutirlos.
--->
-
 ### 11.1 Análisis de la lógica del juego
 
-<!-- [INTEGRANTE 1] Comparar el comportamiento esperado de `game_core`
-(sección 3 y 7.3) contra lo observado en simulación (10.1) y en pruebas
-físicas (10.2). Discutir, por ejemplo, la distribución del LFSR y la
-estrategia de no repetición de palabra. -->
+Las formas de onda coinciden con las transiciones definidas para `game_core`.
+La confirmación de dificultad produce un único evento de inicio; durante
+`GAME`, cada `letter_valid` genera exactamente un pulso `letter_processed` y
+una clasificación mutuamente excluyente. La repetición de `A` en la Figura 7
+no altera `revealed_mask` ni `wrong_count`, lo que valida el uso de
+`used_letters[25:0]` como memoria de letras intentadas.
+
+La victoria de la Figura 8 también permite comprobar una condición que no se
+observa únicamente en las salidas finales: una misma letra puede revelar más
+de una posición. Al recibir `O`, la máscara incorpora simultáneamente ambas
+apariciones y finalmente alcanza `0x1FF`, valor coherente con una palabra de
+nueve caracteres. En contraste, la derrota de la Figura 9 ocurre exactamente
+en el sexto error y antes de agotar el tiempo, mientras que en la Figura 10 el
+contador de errores permanece en cero. Las causas de fin de partida resultan,
+por tanto, independientes y correctamente priorizadas.
+
+El LFSR aporta variación entre partidas y la comparación con `last_index`
+evita repetir inmediatamente una palabra. No constituye aleatoriedad fuerte:
+la semilla fija hace que la secuencia posterior a cada reset sea reproducible.
+Esto fue conveniente para depuración, aunque una mejora sería mezclar en la
+semilla el instante de la confirmación del usuario.
 
 ### 11.2 Análisis de la comunicación UART
 
-<!-- [INTEGRANTE 2] Comparar el protocolo especificado (3.2) contra las
-tramas observadas realmente, confiabilidad, manejo de caracteres
-inválidos, limitaciones (p. ej. ausencia de FIFO). -->
+La recepción observada en la Figura 7 respeta la configuración UART 8N1: cada
+byte válido se reconstruye y se presenta en paralelo junto con un pulso
+`letter_valid`. Los valores `0x41` y `0x4C` corresponden a `A` y `L`, lo que
+confirma la correspondencia entre la trama física y el carácter evaluado por
+el juego. Los bytes fuera del intervalo `A`–`Z` se descartan sin modificar el
+estado, según las comprobaciones del testbench.
+
+La actividad de `RsTx` durante los resultados de letra y al finalizar la
+partida demuestra que `uart_game_interface` serializa las respuestas del
+protocolo de aplicación. El encabezado `0xA5` y las longitudes fijas permiten a
+Python recuperar sincronización y distinguir inicio, resultado de letra y fin
+de partida. Esta separación entre capa física y protocolo facilitó verificar
+los módulos de forma independiente.
+
+La principal limitación es la ausencia de FIFO. El receptor conserva un único
+byte y el transmisor atiende una secuencia a la vez; por ello, una ráfaga desde
+la PC podría sobrescribir o perder información si no se respeta el ritmo del
+sistema. La aplicación mitiga este riesgo enviando una letra por interacción y
+esperando la respuesta correspondiente. Una FIFO pequeña haría la interfaz más
+robusta sin modificar el protocolo externo.
 
 ### 11.3 Análisis del LCD
 
-<!-- [INTEGRANTE 2] Tiempos de inicialización y actualización observados
-frente a lo esperado por el datasheet HD44780; problemas de parpadeo o
-retardo si existieron y su causa. -->
+La separación entre `lcd_screen_controller_completo` y `lcd_peripheral`
+permitió desacoplar el contenido de las restricciones temporales del HD44780.
+El primer bloque decide caracteres y direcciones; el segundo genera la
+inicialización, los pulsos de `lcd_e` y los tiempos de espera. Así, los cambios
+de menú, partida y resultado no dependen directamente de retardos escritos en
+la FSM principal.
+
+Los tiempos empleados son conservadores respecto a los mínimos del
+controlador, lo cual favorece compatibilidad y estabilidad a costa de una
+actualización más lenta. Dado que el contenido del juego cambia a escala
+humana, ese costo no afecta la jugabilidad. Actualizar únicamente cuando
+cambia la pantalla o un carácter reduce escrituras innecesarias y evita
+parpadeos perceptibles.
+
+La simulación integrada verificó la generación de transacciones del bus hacia
+el periférico, pero no reproduce completamente el comportamiento analógico ni
+las tolerancias de un módulo LCD real. Por ese motivo, la fotografía del LCD y
+la validación sobre hardware indicadas como pendientes en la sección 10.2 son
+necesarias para cerrar la comparación experimental.
 
 ### 11.4 Análisis de síntesis, timing y recursos
 
-<!-- [INTEGRANTE 3] Interpretar el WNS/TNS y el porcentaje de utilización
-de recursos: ¿hay margen de timing?, ¿qué módulo consume más recursos y
-por qué?, ¿el diseño sería escalable a un banco de palabras más grande? -->
+Los resultados de las Figuras 11 a 14 muestran que la arquitectura utiliza una
+fracción reducida de la lógica interna: 5.75 % de las LUT y 2.70 % de los
+flip-flops. Por tanto, el límite actual no es la capacidad lógica del Artix-7.
+El porcentaje proporcionalmente mayor corresponde a las E/S (32.08 %), debido
+a que el LCD emplea un bus paralelo de ocho bits y señales de control, además
+de los botones, UART, LED, buzzer y display de siete segmentos.
+
+No se utilizaron bloques BRAM ni DSP. Este resultado es coherente con un diseño
+dominado por FSM, comparadores, contadores y registros pequeños. El banco de
+palabras actual fue inferido con lógica distribuida. La FPGA dispone de margen
+suficiente para ampliar moderadamente el banco; sin embargo, para una expansión
+grande sería preferible describirlo de manera que Vivado infiera BRAM, evitando
+que el crecimiento consuma LUT de forma proporcional.
+
+El cierre temporal también fue satisfactorio. Para la restricción de 100 MHz
+(periodo de 10 ns), el peor slack de setup fue `+0.730 ns` y el peor slack de
+hold `+0.104 ns`; `TNS` y `THS` fueron cero y no hubo endpoints fallidos. Esto
+significa que, después de colocación y enrutamiento, todas las rutas analizadas
+cumplen los tiempos de llegada y retención. El margen de hold es menor que el
+de setup, pero continúa siendo positivo.
+
+La estimación de 0.089 W indica una carga interna baja y un margen térmico
+amplio. No debe interpretarse como consumo medido de la tarjeta: el reporte
+tiene confianza baja y excluye el LCD, buzzer y otros elementos externos. Para
+mejorar la exactitud se requeriría generar actividad SAIF/VCD representativa o
+medir corriente y voltaje directamente sobre el montaje.
 
 ### 11.5 Principales retos, problemas y soluciones
 
@@ -3639,26 +3734,39 @@ Durante el desarrollo del proyecto se presentaron diversos retos asociados princ
 | Detección de letras repetidas | Necesidad de conservar las letras usadas | Pruebas con entradas repetidas | Máscara used_letters[25:0] |
 | Integración de varios periféricos | Todos trabajan simultáneamente con el mismo reloj | Testbenches individuales e integrados | Arquitectura modular y separación de responsabilidades |
 | Depuración hardware/software | Un fallo podía originarse en FPGA, Python, UART o conexión | Pruebas por subsistema | Verificación progresiva antes de integrar |
+| Advertencia DRC `CFGBVS-1` | No se declaró el voltaje del banco de configuración | Reporte DRC posterior a implementación | Se añadieron `CFGBVS=VCCO` y `CONFIG_VOLTAGE=3.3`; el DRC final no presentó violaciones |
 
 ## 12. Conclusiones
 
-<!--
-Peso 15% de la rúbrica. Conclusiones numeradas, claras, fundamentadas y
-ligadas directamente a los objetivos y resultados del proyecto (no genéricas).
-Incluir reflexiones o lecciones aprendidas, y las limitaciones/mejoras
-futuras conocidas del equipo:
-  - UART sin FIFO.
-  - LFSR con semilla fija.
-  - LCD con tiempos de espera conservadores.
-  - Buzzer activo en lugar de pasivo.
--->
-
-1. [INTEGRANTE 1/2/3, en conjunto]
-2. …
+1. La implementación integró en un único sistema la selección de dificultad,
+   el control de la partida, la comunicación UART y la retroalimentación local.
+   El testbench final completó 753 comprobaciones sin errores, incluyendo
+   victoria, derrota por intentos, derrota por tiempo y retorno al menú.
+2. La separación modular permitió verificar individualmente las funciones y
+   localizar problemas durante la integración. En particular, las señales de
+   pulso único evitaron que una pulsación o un carácter UART se procesaran más
+   de una vez, y la máscara de letras usadas permitió ignorar repeticiones sin
+   penalizar al jugador.
+3. El sistema cumple la restricción de 100 MHz después de implementación, con
+   WNS de 0.730 ns, WHS de 0.104 ns y cero rutas fallidas. Además, el DRC final
+   no reportó violaciones, lo que respalda la validez temporal y física del
+   bitstream generado.
+4. La solución ocupa pocos recursos internos: 1195 LUT (5.75 %) y 1122
+   flip-flops (2.70 %), sin BRAM ni DSP. Esto deja margen para ampliar las
+   funciones; si el banco de palabras creciera considerablemente, sería
+   recomendable migrarlo a memoria BRAM.
+5. La verificación mostró la importancia de no depender únicamente de observar
+   salidas finales. Las formas de onda permitieron distinguir la causa exacta
+   de cada derrota, comprobar que una letra repetida no altera los intentos y
+   relacionar cada transición de la FSM con UART, LED y buzzer.
+6. Como mejoras futuras se propone incorporar FIFO en UART para tolerar mejor
+   ráfagas de datos, utilizar actividad SAIF/VCD para una estimación de potencia
+   más realista y completar la evidencia experimental con mediciones físicas
+   del consumo y fotografías del funcionamiento integral.
 
 ---
 
 ## Anexos (opcional)
 
-<!-- Código relevante, tablas extensas de asignación de pines, o cualquier
-material de soporte que no encaje bien en el cuerpo del informe. -->
+Las formas de onda y reportes completos utilizados como evidencia se conservan
+en `docs/informe/fig/` dentro del repositorio del proyecto.
