@@ -11,12 +11,3 @@
 | `tb_hangman_timing.sv` | Temporización del top original `hangman_top` |
 | `tb_hangman_completo.sv` | Verificación integrada del top final |
 
-El top final requerido por `tb_hangman_completo.sv` se encuentra en
-`../src/hangman_top_completo.sv`. Este archivo también contiene los módulos
-`button_conditioner` y `lcd_screen_controller_completo` usados por la
-integración final.
-
-En Vivado, los archivos de `../src/` deben agregarse como **Design Sources** y
-los archivos de esta carpeta como **Simulation Sources**. Para ejecutar la
-verificación integral se debe seleccionar `tb_hangman_completo` como
-**Simulation Top**.
