@@ -780,8 +780,6 @@ Su función es convertir los mensajes recibidos en información comprensible par
 
 # 6.6 Cuarto nivel – Comunicación con la PC
 
-<!-- INSERTAR AQUÍ LA IMAGEN DEL CUARTO NIVEL DE UART -->
-
 ![Cuarto nivel de comunicación UART](imagenes/diagramas/cuarto_nivel_uart.png)
 
 **Figura 5. Diagrama de cuarto nivel de la comunicación con la computadora.**
@@ -854,6 +852,151 @@ Posteriormente la FSM controla la transmisión serial de:
 3. Bit de parada.
 
 El generador de baud rate determina la duración de cada bit y el registro serial entrega finalmente la señal `uart_tx`.
+
+---
+
+# 6.7 Gestión de visualización y sonido
+
+Esta sección reúne los módulos de cuarto nivel encargados de mostrar el estado del juego y generar alertas visuales o sonoras. Todos operan dentro de la FPGA; el LCD, buzzer, LED y displays son dispositivos físicos externos.
+
+## 6.7.1 Unidad de control de alertas
+
+La unidad recibe la fase y los eventos ya procesados por la FSM. Su función es generar las órdenes para el LCD, buzzer y LED; no valida letras ni modifica el estado del juego.
+
+![Diagrama de cuarto nivel - Unidad de control de alertas](figuras/unidad_control_alertas.jpeg)
+
+| Tipo | Señal | Descripción |
+|---|---|---|
+| Entrada | `clk_i` | Reloj de 100 MHz. |
+| Entrada | `rst_i` | Reset global. |
+| Entrada | `fase_i[1:0]` | Selección, partida, resultado o reset. |
+| Entrada | `evento_acierto_i` | Pulso de letra correcta. |
+| Entrada | `evento_error_i` | Pulso de letra incorrecta. |
+| Entrada | `evento_fin_i` | Pulso de victoria o derrota. |
+| Entrada | `victoria_i` | Indica victoria durante el resultado final. |
+| Salida | `pantalla_sel_o[2:0]` | Pantalla solicitada para el LCD. |
+| Salida | `actualizar_lcd_o` | Pulso que solicita actualizar el LCD. |
+| Salida | `tono_sel_o[1:0]` | Patrón sonoro seleccionado. |
+| Salida | `tono_start_o` | Pulso que inicia el tono. |
+| Salida | `led_sel_o[1:0]` | Selección de apagado, encendido o parpadeo. |
+
+La prioridad de alertas es: fin de partida, error, acierto y ausencia de evento.
+
+## 6.7.2 Gestión de LCD externo 16x2
+
+Este bloque construye las pantallas de selección, partida y resultado. El formateador produce dos líneas de 16 caracteres; luego el secuenciador las envía byte a byte al periférico LCD.
+
+![Diagrama de cuarto nivel - Gestión de LCD externo 16x2](figuras/gestion_lcd.jpeg)
+
+| Tipo | Señal | Descripción |
+|---|---|---|
+| Entrada | `patron_i[95:0]` | Patrón visible de hasta 12 caracteres. |
+| Entrada | `errores_i[2:0]` | Letras incorrectas acumuladas. |
+| Entrada | `tiempo_i[6:0]` | Segundos restantes. |
+| Entrada | `modo_i` | Dificultad seleccionada. |
+| Entrada | `resultado_i[1:0]` | Victoria, derrota por intentos o por tiempo. |
+| Entrada | `palabra_secreta_i[95:0]` | Palabra completa, usada al mostrar derrota. |
+| Entrada | `pantalla_sel_i[2:0]` | Pantalla solicitada por alertas. |
+| Entrada | `actualizar_lcd_i` | Pulso que inicia una actualización. |
+| Entrada | `rdata_i[31:0]` | Estado leído desde el periférico LCD. |
+| Salida | `write_enable_o` | Habilitación de escritura del bus de 32 bits. |
+| Salida | `addr_o[1:0]` | Dirección de registro LCD. |
+| Salida | `wdata_o[31:0]` | Dato de escritura hacia el periférico LCD. |
+| Salida | `lcd_busy_o`, `lcd_done_o` | Estado que se reporta a control. |
+
+### 6.7.2.1 Periférico LCD de 32 bits
+
+El periférico adapta el bus de 32 bits a la interfaz paralela del HD44780. Incluye registros de control y datos, secuenciador, temporizador e interfaz física.
+
+| Registro | Dirección | Campos principales |
+|---|---|---|
+| CONTROL/ESTADO | `addr_i=2'b00` | `start`, `rs`, `clear`, `home`, `busy`, `done` |
+| DATOS | `addr_i=2'b01` | `data_byte[7:0]` |
+
+```mermaid
+flowchart LR
+    subgraph PLCD[periferico_lcd]
+        REG[registros CONTROL/ESTADO y DATOS]
+        ARB[árbitro de solicitudes]
+        SEQ[secuenciador HD44780]
+        TIM[temporizador LCD]
+        PHY[interfaz física LCD]
+
+        REG -->|start, rs, clear, home, data_byte| ARB
+        ARB -->|operación aceptada| SEQ
+        SEQ -->|cargar retardo| TIM
+        TIM -->|retardo terminado| SEQ
+        SEQ -->|rs, rw, e, data 7:0| PHY
+        SEQ -->|busy, done| REG
+    end
+
+    BUS[gestión_lcd] -->|write_enable_i, addr_i 1:0, wdata_i 31:0| REG
+    REG -->|rdata_o 31:0| BUS
+    CLK[clk_i 100 MHz] --> TIM
+    CLK --> SEQ
+    RST[rst_i] --> REG
+    RST --> SEQ
+    PHY -->|lcd_rs_o, lcd_rw_o, lcd_e_o, lcd_data_o 7:0| LCD[LCD externo 16x2]
+```
+
+### 6.7.2.2 Máquina de estados del secuenciador HD44780
+
+Después del reset, el secuenciador inicializa el LCD. Luego acepta una operación por vez. El flag `busy` está activo mientras el periférico no está en `IDLE` y `done` dura un ciclo al terminar una operación aceptada.
+
+```mermaid
+stateDiagram-v2
+    [*] --> ESPERA_ENCENDIDO
+    ESPERA_ENCENDIDO --> INICIALIZAR: retardo de arranque completo
+    INICIALIZAR --> IDLE: configuración HD44780 completa
+    IDLE --> CAPTURAR: start, clear o home
+    CAPTURAR --> E_ALTO: rs y data estables
+    E_ALTO --> E_BAJO: ancho mínimo de E cumplido
+    E_BAJO --> ESPERAR_EJECUCION: pulso E finalizado
+    ESPERAR_EJECUCION --> DONE: retardo de comando completo
+    DONE --> IDLE: done igual a 1 por un ciclo
+    IDLE --> IDLE: solicitud inválida se ignora
+```
+
+La inicialización mínima usa los comandos `0x38`, `0x0C`, `0x06` y `0x01`.
+
+## 6.7.3 Gestión de sonido - buzzer externo
+
+El selector escoge un patrón de tono; el generador produce una onda cuadrada y el contador de duración determina cuándo apagar el buzzer.
+
+![Diagrama de cuarto nivel - Gestión de sonido](figuras/gestion_sonido.jpeg)
+
+| Tipo | Señal | Descripción |
+|---|---|---|
+| Entrada | `clk_i` | Reloj de 100 MHz. |
+| Entrada | `rst_i` | Reset global. |
+| Entrada | `tono_sel_i[1:0]` | Silencio, acierto, error o fin. |
+| Entrada | `tono_start_i` | Pulso que inicia el tono seleccionado. |
+| Salida | `buzzer_o` | Onda cuadrada hacia el buzzer externo. |
+
+## 6.7.4 Gestión de visualización - displays de siete segmentos
+
+El controlador convierte tiempo y victorias a BCD, multiplexa los cuatro dígitos y genera los patrones de siete segmentos.
+
+![Diagrama de cuarto nivel - Driver de siete segmentos](figuras/driver_7seg.jpeg)
+Entrada | `rst_i` | Reset global. |
+| Entrada | `tiempo_i[6:0]` | Tiempo restante de 0 a 60 segundos. |
+| Entrada | `victorias_i[6:0]` | Partidas ganadas acumuladas. |
+| Entrada | `ce_display_i` | Habilitación periódica de refresco. |
+| Salida | `seg_o[6:0]` | Patrones para segmentos a-g. |
+| Salida | `an_o[3:0]` | Habilitación de los cuatro dígitos. |
+
+## 6.7.5 Gestión de visualización - LED integrado
+
+El LED indica la fase general: apagado al seleccionar modo, encendido durante la partida y parpadeo al presentar el resultado final.
+
+![Diagrama de cuarto nivel - Codificador LED](figuras/codificador_led.jpeg)
+
+| Tipo | Señal | Descripción |
+|---|---|---|
+| Entrada | `clk_i` | Reloj de 100 MHz para el parpadeo. |
+| Entrada | `rst_i` | Reset global. |
+| Entrada | `led_sel_i[1:0]` | Selección de apagado, encendido o parpadeo. |
+| Salida | `led_o` | Señal del LED integrado. |
 
 ---
 
